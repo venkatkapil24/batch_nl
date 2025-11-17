@@ -106,11 +106,14 @@ class NeighbourList:
         I use b for batch structure idx. 
         """
 
-        # b, lc, 3
+        # lc, 3
         lattice_shifts = self.calculate_batch_lattice_shifts(batch_cells_tensor, radius)
 
+        # 1, lc, 3  X b, 1, 3, 3 -> b, lc, 3
+        lattice_shifts = torch.einsum("li,bij->blj", lattice_shifts.to(batch_cells_tensor.dtype), batch_cells_tensor)
+
         # (b, lc, 1, 3) + (b, 1, n, 3) -> b, lc, n, 3
-        batch_shifted_positions_tensor = lattice_shifts.unsqueeze(0).unsqueeze(2) + batch_positions_tensor.unsqueeze(1)
+        batch_shifted_positions_tensor = lattice_shifts.unsqueeze(-2) + batch_positions_tensor.unsqueeze(1)
 
         # b, 1, 1, n, 3 - b, lc, n, 1, 3 ->  b, lc, n, n
         distance_matrix = ((batch_positions_tensor.unsqueeze(-3).unsqueeze(-3) - batch_shifted_positions_tensor.unsqueeze(-2))**2).sum(dim=-1)
