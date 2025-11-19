@@ -10,6 +10,7 @@ class NeighbourList:
         self.radius = radius
         self.batch_size = batch_size
         self.device = device
+        self.tolerance = 1e-6
 
         self.num_configs = len(self.list_of_configurations)
         self.num_batches = (self.num_configs + self.batch_size - 1) // self.batch_size
@@ -73,13 +74,27 @@ class NeighbourList:
             batch_positions_tensor = self.batch_positions_tensor_list[batch_id].to(self.device)
             batch_cells_tensor = self.batch_cells_tensor_list[batch_id].to(self.device)
             batch_mask_tensor = self.batch_masks_tensor_list[batch_id].to(self.device)
+            lattice_shifts = self.calculate_batch_lattice_shifts(batch_cells_tensor,)
 
-            batch_nl = self._nlist_ON2(batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, self.radius)
-            r.append(batch_nl)
+            distance_matrix, criterion = self._nlist_ON2(batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, lattice_shifts, self.radius, self.tolerance)
+
+            b_r = []
+
+            for i in range(self.batch_size):
+                
+                lattice_shift_idx, atom_idx, neighbour_idx = torch.nonzero(criterion[i], as_tuple=True) 
+                idx = torch.vstack([atom_idx, neighbour_idx, lattice_shift_idx]).t()
+
+                d, order = torch.sort(distance_matrix[i, idx[:, 2], idx[:, 0], idx[:, 1]])
+                i, j  = idx[:, 0:2][order].t()               
+                S  = lattice_shifts[lattice_shift_idx[order]]     # lattice shifts aligned with sorted distances
+                b_r.append([i,j,d,S])
+
+            r.append(b_r)
 
         return r
     
-    def calculate_batch_lattice_shifts(self, batch_cells_tensor, radius):
+    def calculate_batch_lattice_shifts(self, batch_cells_tensor):
         """
         Estimates which periodic images of atoms need to be considered
         given a cell and a radius. Keeps the image lattice shifts constant within a batch.
@@ -88,7 +103,7 @@ class NeighbourList:
         device = batch_cells_tensor.device
 
         batch_cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=1)
-        max_n = torch.max(torch.ceil(radius / batch_cell_lengths), dim=0).values
+        max_n = torch.max(torch.ceil(self.radius / batch_cell_lengths), dim=0).values
 
         mesh = torch.meshgrid(
             torch.arange(-max_n[0], max_n[0] + 1, dtype=torch.int8, device=device),
@@ -100,14 +115,11 @@ class NeighbourList:
         mesh = torch.stack(mesh, dim=-1).reshape(-1, 3)
         return mesh
 
-    def _nlist_ON2(self, batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, radius):
+    def _nlist_ON2(self, batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, lattice_shifts, radius, tolerance):
         """
         Computes a distance squared matrix. In the comments, to explain the implementation, 
         I use b for batch structure idx. 
         """
-
-        # lc, 3
-        lattice_shifts = self.calculate_batch_lattice_shifts(batch_cells_tensor, radius)
 
         # 1, lc, 3  X b, 1, 3, 3 -> b, lc, 3
         lattice_shifts = torch.einsum("li,bij->blj", lattice_shifts.to(batch_cells_tensor.dtype), batch_cells_tensor)
@@ -116,14 +128,23 @@ class NeighbourList:
         batch_shifted_positions_tensor = lattice_shifts.unsqueeze(-2) + batch_positions_tensor.unsqueeze(1)
 
         # b, 1, 1, n, 3 - b, lc, n, 1, 3 ->  b, lc, n, n
-        distance_matrix = ((batch_positions_tensor.unsqueeze(-3).unsqueeze(-3) - batch_shifted_positions_tensor.unsqueeze(-2))**2).sum(dim=-1)
+        distance_matrix = torch.sqrt(((batch_positions_tensor.unsqueeze(-3).unsqueeze(-3) - batch_shifted_positions_tensor.unsqueeze(-2))**2).sum(dim=-1))
 
-        distance_matrix_criteron = distance_matrix <= radius**2
+        distance_matrix_criteron = (distance_matrix <= radius) & (distance_matrix >= tolerance)
 
         # get the appropriate mask for atom pair connectivity
-        default_mask =  batch_mask_tensor.unsqueeze(-2) & batch_mask_tensor.unsqueeze(-1)
+        default_mask = batch_mask_tensor.unsqueeze(-2) & batch_mask_tensor.unsqueeze(-1)
+        
+        # adds dim for lattice_shifts
+        default_mask = default_mask.unsqueeze(1)
 
-        final_criteron = torch.logical_and(distance_matrix_criteron, default_mask)
+        criteron = torch.logical_and(distance_matrix_criteron, default_mask)
 
-        return final_criteron
+        return distance_matrix, criteron
+    
+
+    def postprocess_neighbourlist(self, ):
+        """
+
+        """
 
