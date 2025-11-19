@@ -85,9 +85,13 @@ class NeighbourList:
                 lattice_shift_idx, atom_idx, neighbour_idx = torch.nonzero(criterion[i], as_tuple=True) 
                 idx = torch.vstack([atom_idx, neighbour_idx, lattice_shift_idx]).t()
 
-                d, order = torch.sort(distance_matrix[i, idx[:, 2], idx[:, 0], idx[:, 1]])
-                i, j  = idx[:, 0:2][order].t()               
-                S  = lattice_shifts[lattice_shift_idx[order]]     # lattice shifts aligned with sorted distances
+                #d, order = torch.sort(distance_matrix[i, idx[:, 2], idx[:, 0], idx[:, 1]])
+                #i, j  = idx[:, 0:2][order].t()               
+                #S  = lattice_shifts[lattice_shift_idx[order]]     # lattice shifts aligned with sorted distances
+                d = distance_matrix[i, idx[:, 2], idx[:, 0], idx[:, 1]]
+                i, j = idx[:, 0:2].t()
+                S  = lattice_shifts[lattice_shift_idx]
+
                 b_r.append([i,j,d,S])
 
             r.append(b_r)
