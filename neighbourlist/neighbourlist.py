@@ -1,20 +1,80 @@
 import torch
+import warnings
 
 class NeighbourList:
     """
+    Batched neighbour-list builder using PyTorch.
+
+    Given a list of periodic configurations, this class builds neighbour
+    lists for all structures using a common cutoff radius. Configurations 
+    are grouped into fixed-size batches and padded, so the heavy work
+    can be done with vectorised tensor operations on a chosen device.
     """
 
-    def __init__(self, list_of_configurations, radius, batch_size, device):
+    def __init__(self,
+             list_of_configurations: list,
+             radius: float,
+             batch_size: int,
+             device: str | torch.device | None = None):
+        """
+        Parameters
+        ----------
+        list_of_configurations : list of Atoms
+            List of ASE-like Atoms objects with `.positions` and `.cell`.
+
+        radius : float
+            Cutoff radius.
+
+        batch_size : int
+            Number of configurations processed together per batch.
+
+        device : str or torch.device
+            Compute device ("cpu", "cuda", or torch.device(...)).
+        """
 
         self.list_of_configurations = list_of_configurations
-        self.radius = radius
-        self.batch_size = batch_size
-        self.device = device
-        self.tolerance = 1e-6
-
         self.num_configs = len(self.list_of_configurations)
+
+        # checks radius
+        if isinstance(radius, int):
+            warnings.warn("Converting radius from int to float.", stacklevel=2)
+        try:
+            radius = float(radius)
+        except Exception:
+            raise TypeError(f"radius must be convertible to float, got {radius!r}.")
+        
+        if radius <= 0.0:
+            raise ValueError(f"radius must be positive, got {radius}.")
+
+        self.radius = radius
+
+        # checks batch_size 
+        
+        if not isinstance(batch_size, int) or batch_size <= 0:
+            raise ValueError(f"batch_size must be a positive int, got {batch_size}")
+
+        if batch_size > self.num_configs:
+            raise ValueError(
+                "batch_size must be smaller than or equal to the total number of configurations."
+            )
+
+        self.batch_size = batch_size
         self.num_batches = (self.num_configs + self.batch_size - 1) // self.batch_size
 
+        # checks device
+
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        elif not isinstance(device,  (str, torch.device)):
+            raise TypeError(f"device should be a string or torch.device, got {type(device).__name__}.")
+        else:
+            self.device = torch.device(device)
+
+        # an internal tolerance for check self images after wrapping
+        self.tolerance = 1e-6
+
+        # compoled neighbourlist function
         self._nlist_ON2_compiled = torch.compile(self._nlist_ON2)
 
     def load_data(self):
