@@ -61,6 +61,9 @@ class NeighbourList:
         self.batch_size = batch_size
         self.num_batches = (self.num_configs + self.batch_size - 1) // self.batch_size
 
+        self.float_dtype = torch.float32
+        self.int_dtype = torch.int64
+
         # checks device
 
         if device is None:
@@ -82,8 +85,8 @@ class NeighbourList:
         Converts the list of configurations into a form suitable for batching. 
         """
 
-        self.cell_list = [torch.tensor(atoms.cell.array, dtype=torch.float32) for atoms in self.list_of_configurations]
-        self.positions_list = [torch.tensor(atoms.positions, dtype=torch.float32) for atoms in self.list_of_configurations]
+        self.cell_list = [torch.tensor(atoms.cell.array, dtype=self.float_dtype) for atoms in self.list_of_configurations]
+        self.positions_list = [torch.tensor(atoms.positions, dtype=self.float_dtype) for atoms in self.list_of_configurations]
 
         self._batch_and_mask_positions_and_cells()
 
@@ -149,7 +152,7 @@ class NeighbourList:
               
                 lattice_shift_idx, atom_idx, neighbour_idx = torch.nonzero(criterion[i], as_tuple=True)
 
-                d = distance_matrix[i, lattice_shift_idx, atom_idx, neighbour_idx]
+                d = distance_matrix[i, lattice_shift_idx, atom_igdx, neighbour_idx]
                 S = lattice_shifts[lattice_shift_idx]
 
                 b_r.append([atom_idx, neighbour_idx, d, S])
@@ -170,9 +173,9 @@ class NeighbourList:
         max_n = torch.max(torch.ceil(self.radius / batch_cell_lengths), dim=0).values
 
         mesh = torch.meshgrid(
-            torch.arange(-max_n[0], max_n[0] + 1, dtype=torch.int8, device=device),
-            torch.arange(-max_n[1], max_n[1] + 1, dtype=torch.int8, device=device),
-            torch.arange(-max_n[2], max_n[2] + 1, dtype=torch.int8, device=device),
+            torch.arange(-max_n[0], max_n[0] + 1, dtype=self.int_dtype, device=device),
+            torch.arange(-max_n[1], max_n[1] + 1, dtype=self.int_dtype, device=device),
+            torch.arange(-max_n[2], max_n[2] + 1, dtype=self.int_dtype, device=device),
             indexing='ij'
         )
 
@@ -194,7 +197,7 @@ class NeighbourList:
         # b, 1, 1, n, 3 - b, lc, n, 1, 3 ->  b, lc, n, n
         distance_matrix = torch.sqrt(((batch_positions_tensor.unsqueeze(-3).unsqueeze(-3) - batch_shifted_positions_tensor.unsqueeze(-2))**2).sum(dim=-1))
 
-        distance_matrix_criteron = (distance_matrix <= radius) & (distance_matrix >= tolerance)
+        distance_matrix_criterion = (distance_matrix <= radius) & (distance_matrix >= tolerance)
 
         # get the appropriate mask for atom pair connectivity
         default_mask = batch_mask_tensor.unsqueeze(-2) & batch_mask_tensor.unsqueeze(-1)
@@ -202,7 +205,7 @@ class NeighbourList:
         # adds dim for lattice_shifts
         default_mask = default_mask.unsqueeze(1)
 
-        criteron = torch.logical_and(distance_matrix_criteron, default_mask)
+        criterion = torch.logical_and(distance_matrix_criterion, default_mask)
 
-        return distance_matrix, criteron
+        return distance_matrix, criterion
     
