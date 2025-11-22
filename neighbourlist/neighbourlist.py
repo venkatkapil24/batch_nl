@@ -152,7 +152,7 @@ class NeighbourList:
               
                 lattice_shift_idx, atom_idx, neighbour_idx = torch.nonzero(criterion[i], as_tuple=True)
 
-                d = distance_matrix[i, lattice_shift_idx, atom_igdx, neighbour_idx]
+                d = distance_matrix[i, lattice_shift_idx, atom_idx, neighbour_idx]
                 S = lattice_shifts[lattice_shift_idx]
 
                 b_r.append([atom_idx, neighbour_idx, d, S])
