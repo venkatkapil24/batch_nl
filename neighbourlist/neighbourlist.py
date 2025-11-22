@@ -82,7 +82,7 @@ class NeighbourList:
         Converts the list of configurations into a form suitable for batching. 
         """
 
-        self.cell_list = [torch.tensor(atoms.cell, dtype=torch.float32) for atoms in self.list_of_configurations]
+        self.cell_list = [torch.tensor(atoms.cell.array, dtype=torch.float32) for atoms in self.list_of_configurations]
         self.positions_list = [torch.tensor(atoms.positions, dtype=torch.float32) for atoms in self.list_of_configurations]
 
         self._batch_and_mask_positions_and_cells()
