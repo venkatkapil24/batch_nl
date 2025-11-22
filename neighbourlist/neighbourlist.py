@@ -108,8 +108,8 @@ class NeighbourList:
 
             position_size_max = max(len(p) for p in self.positions_list[structure_id_min : structure_id_max])
 
-            batch_positions_tensor = torch.zeros(self.batch_size, position_size_max, 3)
-            batch_cells_tensor = torch.eye(3).unsqueeze(0).repeat(self.batch_size, 1, 1)
+            batch_positions_tensor = torch.zeros(self.batch_size, position_size_max, 3, dtype=self.float_dtype)
+            batch_cells_tensor = torch.eye(3, dtype=self.float_dtype).unsqueeze(0).repeat(self.batch_size, 1, 1)
             batch_masks_tensor = torch.zeros(self.batch_size, position_size_max, dtype=torch.bool)
             del position_size_max
 
