@@ -70,9 +70,9 @@ class NeighbourList:
         r = []
 
         if use_torch_compile:
-            nlf = self._nlist_ON2_compiled
+            neighbourlist_fn = self._nlist_ON2_compiled
         else:
-            nlf = self._nlist_ON2
+            neighbourlist_fn = self._nlist_ON2
 
         for batch_id in range(self.num_batches):
 
@@ -81,7 +81,7 @@ class NeighbourList:
             batch_mask_tensor = self.batch_masks_tensor_list[batch_id].to(self.device)
             lattice_shifts = self.calculate_batch_lattice_shifts(batch_cells_tensor,)
 
-            distance_matrix, criterion = nlf(batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, lattice_shifts, self.radius, self.tolerance)
+            distance_matrix, criterion = neighbourlist_fn(batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, lattice_shifts, self.radius, self.tolerance)
 
             b_r = []
 
@@ -151,9 +151,3 @@ class NeighbourList:
 
         return distance_matrix, criteron
     
-
-    def postprocess_neighbourlist(self, ):
-        """
-
-        """
-
