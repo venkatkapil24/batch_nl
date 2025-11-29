@@ -125,7 +125,7 @@ class NeighbourList:
             self.batch_cells_tensor_list.append(batch_cells_tensor)
             self.batch_masks_tensor_list.append(batch_masks_tensor)
 
-    def calculate_neighbourlist(self, use_torch_compile=True):
+    def calculate_neighbourlist_ON2(self, use_torch_compile=True):
         """
         The money shot. 
         """
@@ -161,6 +161,39 @@ class NeighbourList:
 
         return r
     
+    def calculate_neighbourlist_ON1(self, use_torch_compile=True):
+        """
+        The money shot. 
+        """
+
+        r = []
+
+        neighbourlist_fn = self._nlist_ON1
+
+        #if use_torch_compile:
+        #    neighbourlist_fn = self._nlist_ON1_compiled
+        #else:
+        #    neighbourlist_fn = self._nlist_ON1
+
+        for batch_id in range(self.num_batches):
+
+            batch_positions_tensor = self.batch_positions_tensor_list[batch_id].to(self.device)
+            batch_cells_tensor = self.batch_cells_tensor_list[batch_id].to(self.device)
+            batch_mask_tensor = self.batch_masks_tensor_list[batch_id].to(self.device)
+            lattice_shifts = self.calculate_batch_lattice_shifts(batch_cells_tensor,)
+
+            out = neighbourlist_fn(batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, lattice_shifts, self.radius, self.tolerance)
+
+            b_r = [[] for _ in range(self.batch_size)]
+
+            for row in out:
+                b, i, j = row[0].item(), row[1].item(), row[2].item()
+                shift   = row[3:6]    # tensor of shape (3,)
+                d       = row[6].item()
+                b_r[b].append([i, j, d, shift])
+
+        return r
+
     def calculate_batch_lattice_shifts(self, batch_cells_tensor):
         """
         Estimates which periodic images of atoms need to be considered
@@ -208,4 +241,54 @@ class NeighbourList:
         criterion = torch.logical_and(distance_matrix_criterion, default_mask)
 
         return distance_matrix, criterion
+    
+
+    def _nlist_ON1(self, batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, lattice_shifts, radius, tolerance):
+        """
+        Computes a linked-cell to identify neighbours.
+        """
+
+        # estimate maximum bins for the system
+        
+        # b, cell_idx, cartesian_idx -> b, cell_idx
+        batch_cell_lengths_tensor = torch.linalg.norm(batch_cells_tensor, dim=-1)
+
+        # b, cell_idx
+        max_bins = torch.clamp((batch_cell_lengths_tensor / self.radius).floor(), min=1).to(self.int_dtype)
+
+        # estimate linked cell indices of the system
+
+        # b, cell_idx, cartesian_idx -> b, cell_idx, cartesian_idx
+        batch_cell_inverses_tensor = torch.linalg.inv(batch_cells_tensor)
+        
+        # b, atom_idx, cartesian_idx X b, cell_idx, cartesian_idx (?)
+        batch_fractional_positions = batch_positions_tensor @ batch_cell_inverses_tensor
+        batch_fractional_positions = batch_fractional_positions - torch.floor(batch_fractional_positions)
+
+        # b, atom_idx, cartesian_idx X b, 1, cell_idx
+        batch_c = (batch_fractional_positions * max_bins.unsqueeze(1).to(batch_fractional_positions.dtype))
+        batch_c = batch_c.floor().to(self.int_dtype)
+
+        # estimate linked cell indices of periodic images
+        batch_fractional_image_positions = batch_fractional_positions.unsqueeze(1) + lattice_shifts.view(1, -1, 1, 3).to(batch_fractional_positions.dtype)
+
+        batch_image_c = (batch_fractional_image_positions * max_bins.view(-1, 1, 1, 3).to(batch_fractional_positions.dtype)).floor().to(self.int_dtype)
+
+        batch_cell_mask = ((batch_image_c.unsqueeze(3) - batch_c.unsqueeze(1).unsqueeze(1)).abs() <= 1).all(dim=-1)
+
+        b_idx, k_idx, j_idx, i_idx = batch_cell_mask.nonzero(as_tuple=True)
+
+        r_i = batch_positions_tensor[b_idx, i_idx]
+
+        # (atom_idx, cartesian_idx) + (atom_idx, 1, cell_idx)  X (atom_idx, cell_idx, cartesian_idx) 
+        r_j = batch_positions_tensor[b_idx, j_idx] + (lattice_shifts[k_idx].to(batch_positions_tensor.dtype).unsqueeze(1) @ batch_cells_tensor[b_idx]).squeeze(1)
+
+        ds = (r_i - r_j).norm(dim=-1)
+
+        default_mask = batch_mask_tensor[b_idx, i_idx] & batch_mask_tensor[b_idx, j_idx]
+        distance_mask = (ds < radius) & (ds >= tolerance)
+        final_criterion = default_mask & distance_mask        
+
+        return torch.stack([b_idx, i_idx, j_idx, lattice_shifts[k_idx][:,0], lattice_shifts[k_idx][:,1], lattice_shifts[k_idx][:,2], ds], dim=1)[final_criterion]
+
     
