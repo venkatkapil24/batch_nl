@@ -37,7 +37,7 @@ def test_neighbourlist_counter_based():
     )
 
     nl.load_data()
-    out = nl.calculate_neighbourlist(use_torch_compile=False)
+    out = nl.calculate_neighbourlist_ON2(use_torch_compile=False)
 
     # unpack output
     i, j, d, S = out[0][0]
