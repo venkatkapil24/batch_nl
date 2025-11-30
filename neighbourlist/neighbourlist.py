@@ -155,7 +155,7 @@ class NeighbourList:
                 d = distance_matrix[i, lattice_shift_idx, atom_idx, neighbour_idx]
                 S = lattice_shifts[lattice_shift_idx]
 
-                b_r.append([atom_idx, neighbour_idx, d, S])
+                b_r.append([atom_idx, neighbour_idx, S, d])
 
             r.append(b_r)
 
@@ -184,13 +184,17 @@ class NeighbourList:
 
             out = neighbourlist_fn(batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, lattice_shifts, self.radius, self.tolerance)
 
-            b_r = [[] for _ in range(self.batch_size)]
+            b_r = []
+            
+            for b in range(self.batch_size):
+                mask = (out[:, 0] == b)
+                i_b = out[mask, 1].to(torch.long)
+                j_b = out[mask, 2].to(torch.long)
+                shift_b = out[mask, 3:6]
+                d_b = out[mask, 6]
+                b_r.append([i_b, j_b, shift_b, d_b])
 
-            for row in out:
-                b, i, j = row[0].item(), row[1].item(), row[2].item()
-                shift   = row[3:6]    # tensor of shape (3,)
-                d       = row[6].item()
-                b_r[b].append([i, j, d, shift])
+            r.append(b_r)
 
         return r
 
@@ -202,7 +206,7 @@ class NeighbourList:
 
         device = batch_cells_tensor.device
 
-        batch_cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=1)
+        batch_cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)
         max_n = torch.max(torch.ceil(self.radius / batch_cell_lengths), dim=0).values
 
         mesh = torch.meshgrid(
@@ -228,7 +232,7 @@ class NeighbourList:
         batch_shifted_positions_tensor = lattice_shifts.unsqueeze(-2) + batch_positions_tensor.unsqueeze(1)
 
         # b, 1, 1, n, 3 - b, lc, n, 1, 3 ->  b, lc, n, n
-        distance_matrix = torch.sqrt(((batch_positions_tensor.unsqueeze(-3).unsqueeze(-3) - batch_shifted_positions_tensor.unsqueeze(-2))**2).sum(dim=-1))
+        distance_matrix = torch.sqrt(((batch_positions_tensor.unsqueeze(1).unsqueeze(3) - batch_shifted_positions_tensor.unsqueeze(2))**2).sum(dim=-1))
 
         distance_matrix_criterion = (distance_matrix <= radius) & (distance_matrix >= tolerance)
 
@@ -274,7 +278,7 @@ class NeighbourList:
 
         batch_image_c = (batch_fractional_image_positions * max_bins.view(-1, 1, 1, 3).to(batch_fractional_positions.dtype)).floor().to(self.int_dtype)
 
-        batch_cell_mask = ((batch_image_c.unsqueeze(3) - batch_c.unsqueeze(1).unsqueeze(1)).abs() <= 1).all(dim=-1)
+        batch_cell_mask = ((batch_image_c.unsqueeze(3) - batch_c.unsqueeze(1).unsqueeze(1)).abs() <= 2).all(dim=-1)
 
         b_idx, k_idx, j_idx, i_idx = batch_cell_mask.nonzero(as_tuple=True)
 

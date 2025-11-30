@@ -37,27 +37,45 @@ def test_neighbourlist_counter_based():
     )
 
     nl.load_data()
-    out = nl.calculate_neighbourlist_ON2(use_torch_compile=False)
+    out = nl.calculate_neighbourlist_ON1(use_torch_compile=False)
 
     # unpack output
-    i, j, d, S = out[0][0]
+    i, j, S, d = out[0][0]
+    i = i.cpu()
+    j = j.cpu()
+    d = d.cpu()
+    S = S.cpu()
 
     # --- ASE reference ---
     ASE_i, ASE_j, ASE_S, ASE_d = ase_neighbor_list("ijSd", carbon, cutoff=3.0)
 
-    # --- Counter-based comparisons ---
+    # --- build multiset of neighbour tuples for VK ---
+    pairs = Counter(
+    (
+        int(i[k].item()),
+        int(j[k].item()),
+        tuple(S[k].tolist()),
+        round(float(d[k]), 3),
+    )
+    for k in range(len(i))
+    )
 
-    # i and j — integers
-    assert Counter(int(ii) for ii in i.cpu()) == Counter(int(ii) for ii in ASE_i)
-    assert Counter(int(jj) for jj in j.cpu()) == Counter(int(jj) for jj in ASE_j)
+    # --- build multiset of neighbour tuples for ASE ---
+    ase_pairs = Counter(
+    (
+        int(ASE_i[k].item()),
+        int(ASE_j[k].item()),
+        tuple(ASE_S[k].tolist()),
+        round(float(ASE_d[k]), 3),
+    )
+    for k in range(len(ASE_i))
+    )
 
-    # S — lattice shift rows as tuples
-    assert Counter(tuple(row.tolist()) for row in S.cpu()) == \
-           Counter(tuple(row) for row in ASE_S)
+    print (len(ASE_i), len(i))
+    print (len(ASE_j), len(j))
+    print (len(ASE_S), len(S))
+    print (len(ASE_d), len(d))
 
-    # d — floating distances (compare rounded to avoid tiny FP noise)
-    assert Counter(round(float(x), 3) for x in d.cpu()) == \
-           Counter(round(float(x), 3) for x in ASE_d)
-
+    assert pairs == ase_pairs
 
     print("Neighbour list matches ASE — test passed.")
