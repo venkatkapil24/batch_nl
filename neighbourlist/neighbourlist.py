@@ -79,6 +79,7 @@ class NeighbourList:
 
         # compoled neighbourlist function
         self._nlist_ON2_compiled = torch.compile(self._nlist_ON2)
+        self._nlist_ON1_compiled = torch.compile(self._nlist_ON1)
 
     def load_data(self):
         """
@@ -168,12 +169,10 @@ class NeighbourList:
 
         r = []
 
-        neighbourlist_fn = self._nlist_ON1
-
-        #if use_torch_compile:
-        #    neighbourlist_fn = self._nlist_ON1_compiled
-        #else:
-        #    neighbourlist_fn = self._nlist_ON1
+        if use_torch_compile:
+            neighbourlist_fn = self._nlist_ON1_compiled
+        else:
+            neighbourlist_fn = self._nlist_ON1
 
         for batch_id in range(self.num_batches):
 
