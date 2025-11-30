@@ -255,10 +255,10 @@ class NeighbourList:
         # estimate maximum bins for the system
         
         # b, cell_idx, cartesian_idx -> b, cell_idx
-        batch_cell_lengths_tensor = torch.linalg.norm(batch_cells_tensor, dim=-1)
+        batch_cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)
 
         # b, cell_idx
-        max_bins = torch.clamp((batch_cell_lengths_tensor / self.radius).floor(), min=1).to(self.int_dtype)
+        max_bins = torch.clamp((batch_cell_lengths / self.radius).floor(), min=1).to(self.int_dtype)
 
         # estimate linked cell indices of the system
 
@@ -278,7 +278,10 @@ class NeighbourList:
 
         batch_image_c = (batch_fractional_image_positions * max_bins.view(-1, 1, 1, 3).to(batch_fractional_positions.dtype)).floor().to(self.int_dtype)
 
-        batch_cell_mask = ((batch_image_c.unsqueeze(3) - batch_c.unsqueeze(1).unsqueeze(1)).abs() <= 2).all(dim=-1)
+        # the offset to consider
+        p = torch.ceil(radius * max_bins.to(batch_cell_lengths.dtype) / batch_cell_lengths).to(max_bins.dtype)
+
+        batch_cell_mask = ((batch_image_c.unsqueeze(3) - batch_c.unsqueeze(1).unsqueeze(1)).abs() <= p.view(-1, 1, 1, 1, 3)).all(dim=-1)
 
         b_idx, k_idx, j_idx, i_idx = batch_cell_mask.nonzero(as_tuple=True)
 

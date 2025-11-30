@@ -71,11 +71,6 @@ def test_neighbourlist_counter_based():
     for k in range(len(ASE_i))
     )
 
-    print (len(ASE_i), len(i))
-    print (len(ASE_j), len(j))
-    print (len(ASE_S), len(S))
-    print (len(ASE_d), len(d))
-
     assert pairs == ase_pairs
 
     print("Neighbour list matches ASE — test passed.")
