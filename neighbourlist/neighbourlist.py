@@ -197,7 +197,7 @@ class NeighbourList:
         # b, 1, 1, n, 3 - b, lc, n, 1, 3 ->  b, lc, n, n
         distance_matrix = torch.sqrt(((batch_positions_tensor.unsqueeze(1).unsqueeze(3) - batch_shifted_positions_tensor.unsqueeze(2))**2).sum(dim=-1))
 
-        distance_matrix_criterion = (distance_matrix <= radius) & (distance_matrix >= tolerance)
+        distance_matrix_criterion = (distance_matrix < radius) & (distance_matrix >= tolerance)
 
         # get the appropriate mask for atom pair connectivity
         default_mask = batch_mask_tensor.unsqueeze(-2) & batch_mask_tensor.unsqueeze(-1)
