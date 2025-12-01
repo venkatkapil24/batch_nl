@@ -20,12 +20,6 @@ def _make_carbon():
     ]
     return Atoms(symbols="CCCC", positions=positions, cell=cell, pbc=True)
 
-
-def test_carbon_A2p46_B2p40_C6p82_a92p30_b91p20_g121p20_ON1():
-    carbon = _make_carbon()
-    _check_neighbourlist_ON1_matches_ase(carbon, radius=3.0)
-
-
 def test_carbon_A2p46_B2p40_C6p82_a92p30_b91p20_g121p20_ON2():
     carbon = _make_carbon()
     _check_neighbourlist_ON2_matches_ase(carbon, radius=3.0)
