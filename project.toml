@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pynl-torch"
+version = "0.1.0b0"
+description = "Efficient and batched PyTorch-based neighbour list builder for atomistic simulations"
+readme = "README.md"
+requires-python = ">=3.7"
+license = { text = "Academic Software Licence v1.0 (ASL)" }
+authors = [
+  { name = "Venkat Kapil" }
+]
+
+dependencies = [
+  "torch>=1.12",
+  "ase",
+  "matscipy",
+]
+
+[project.urls]
+Homepage = "https://github.com/venkatkapil24/pynl"
+Repository = "https://github.com/venkatkapil24/pynl"
+
+[tool.setuptools]
+packages = ["pynl"]
