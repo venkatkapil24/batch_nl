@@ -94,11 +94,11 @@ class NeighbourList:
 
         Must be called before `calculate_neighbourlist`.
         """
-
-        self.cell_list = [torch.tensor(atoms.cell.array, dtype=self.float_dtype) for atoms in self.list_of_configurations]
-        self.positions_list = [torch.tensor(atoms.positions, dtype=self.float_dtype) for atoms in self.list_of_configurations]
-
-        self._batch_and_mask_positions_and_cells()
+       
+       self.cell_list = [torch.tensor(atoms.cell.array, dtype=self.float_dtype) for atoms in self.list_of_configurations]
+       self.positions_list = [torch.tensor(atoms.positions, dtype=self.float_dtype) for atoms in self.list_of_configurations]
+       
+       self._batch_and_mask_positions_and_cells()
 
     def _batch_and_mask_positions_and_cells(self):
         """

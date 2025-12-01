@@ -1,6 +1,11 @@
+"""Regression tests for ON2 neighbour list vs matscipy across diverse cells."""
+
 from ase import Atoms
 from ase.build import bulk
-from .utils import _check_neighbourlist_ON2_matches_ase
+import pytest
+
+from .utils import _check_neighbourlist_ON2_matches_matscipy as check_nl
+
 
 def _make_carbon_oblique() -> Atoms:
     cell = [
@@ -88,137 +93,24 @@ def _make_cacr_p2_o7_triclinic() -> Atoms:
     return Atoms(positions=positions, numbers=numbers, cell=cell, pbc=True)
 
 
-# ------------------------- tests below -------------------------
+STRUCTURE_FACTORIES = [
+    _make_carbon_oblique,
+    _make_silicon_diamond_cubic,
+    _make_silicon_diamond,
+    _make_copper_fcc,
+    _make_silicon_bct,
+    _make_titanium_hcp,
+    _make_bismuth_rhombohedral_alpha20,
+    _make_bismuth_rhombohedral_alpha10,
+    _make_sicu_rocksalt,
+    _make_sifcu_fluorite,
+    _make_cacr_p2_o7_triclinic,
+]
 
 
-def test_carbon_oblique_ON2():
-    atoms = _make_carbon_oblique()
-    _check_neighbourlist_ON2_matches_ase(atoms, radius=3.0)
-
-
-def test_carbon_oblique_ON2_with_torch_compile():
-    atoms = _make_carbon_oblique()
-    _check_neighbourlist_ON2_matches_ase(
-        atoms, radius=3.0, use_torch_compile=True
-    )
-
-
-def test_silicon_diamond_cubic_ON2():
-    atoms = _make_silicon_diamond_cubic()
-    _check_neighbourlist_ON2_matches_ase(atoms, radius=3.0)
-
-
-def test_silicon_diamond_cubic_ON2_with_torch_compile():
-    atoms = _make_silicon_diamond_cubic()
-    _check_neighbourlist_ON2_matches_ase(
-        atoms, radius=3.0, use_torch_compile=True
-    )
-
-
-def test_silicon_diamond_ON2():
-    atoms = _make_silicon_diamond()
-    _check_neighbourlist_ON2_matches_ase(atoms, radius=3.0)
-
-
-def test_silicon_diamond_ON2_with_torch_compile():
-    atoms = _make_silicon_diamond()
-    _check_neighbourlist_ON2_matches_ase(
-        atoms, radius=3.0, use_torch_compile=True
-    )
-
-
-def test_copper_fcc_ON2():
-    atoms = _make_copper_fcc()
-    _check_neighbourlist_ON2_matches_ase(atoms, radius=3.0)
-
-
-def test_copper_fcc_ON2_with_torch_compile():
-    atoms = _make_copper_fcc()
-    _check_neighbourlist_ON2_matches_ase(
-        atoms, radius=3.0, use_torch_compile=True
-    )
-
-
-def test_silicon_bct_ON2():
-    atoms = _make_silicon_bct()
-    _check_neighbourlist_ON2_matches_ase(atoms, radius=3.0)
-
-
-def test_silicon_bct_ON2_with_torch_compile():
-    atoms = _make_silicon_bct()
-    _check_neighbourlist_ON2_matches_ase(
-        atoms, radius=3.0, use_torch_compile=True
-    )
-
-
-def test_titanium_hcp_ON2():
-    atoms = _make_titanium_hcp()
-    _check_neighbourlist_ON2_matches_ase(atoms, radius=3.0)
-
-
-def test_titanium_hcp_ON2_with_torch_compile():
-    atoms = _make_titanium_hcp()
-    _check_neighbourlist_ON2_matches_ase(
-        atoms, radius=3.0, use_torch_compile=True
-    )
-
-
-def test_bismuth_rhombohedral_alpha20_ON2():
-    atoms = _make_bismuth_rhombohedral_alpha20()
-    _check_neighbourlist_ON2_matches_ase(atoms, radius=3.0)
-
-
-def test_bismuth_rhombohedral_alpha20_ON2_with_torch_compile():
-    atoms = _make_bismuth_rhombohedral_alpha20()
-    _check_neighbourlist_ON2_matches_ase(
-        atoms, radius=3.0, use_torch_compile=True
-    )
-
-
-def test_bismuth_rhombohedral_alpha10_ON2():
-    atoms = _make_bismuth_rhombohedral_alpha10()
-    _check_neighbourlist_ON2_matches_ase(atoms, radius=3.0)
-
-
-def test_bismuth_rhombohedral_alpha10_ON2_with_torch_compile():
-    atoms = _make_bismuth_rhombohedral_alpha10()
-    _check_neighbourlist_ON2_matches_ase(
-        atoms, radius=3.0, use_torch_compile=True
-    )
-
-
-def test_sicu_rocksalt_ON2():
-    atoms = _make_sicu_rocksalt()
-    _check_neighbourlist_ON2_matches_ase(atoms, radius=3.0)
-
-
-def test_sicu_rocksalt_ON2_with_torch_compile():
-    atoms = _make_sicu_rocksalt()
-    _check_neighbourlist_ON2_matches_ase(
-        atoms, radius=3.0, use_torch_compile=True
-    )
-
-
-def test_sifcu_fluorite_ON2():
-    atoms = _make_sifcu_fluorite()
-    _check_neighbourlist_ON2_matches_ase(atoms, radius=3.0)
-
-
-def test_sifcu_fluorite_ON2_with_torch_compile():
-    atoms = _make_sifcu_fluorite()
-    _check_neighbourlist_ON2_matches_ase(
-        atoms, radius=3.0, use_torch_compile=True
-    )
-
-
-def test_cacr_p2_o7_triclinic_ON2():
-    atoms = _make_cacr_p2_o7_triclinic()
-    _check_neighbourlist_ON2_matches_ase(atoms, radius=3.0)
-
-
-def test_cacr_p2_o7_triclinic_ON2_with_torch_compile():
-    atoms = _make_cacr_p2_o7_triclinic()
-    _check_neighbourlist_ON2_matches_ase(
-        atoms, radius=3.0, use_torch_compile=True
-    )
+@pytest.mark.parametrize("make_atoms", STRUCTURE_FACTORIES)
+@pytest.mark.parametrize("use_torch_compile", [False, True])
+def test_on2_matches_matscipy_for_various_cells(make_atoms, use_torch_compile):
+    atoms = make_atoms()
+    check_nl(atoms, radius=3.0, use_torch_compile=use_torch_compile)
 
