@@ -81,20 +81,46 @@ class NeighbourList:
         self._nlist_ON2_compiled = torch.compile(self._nlist_ON2)
 
     def load_data(self):
-        """
-        Converts the list of configurations into a form suitable for batching. 
-        """
+       """
+        Convert the input configurations to tensor form and prepare batches.
 
-        self.cell_list = [torch.tensor(atoms.cell.array, dtype=self.float_dtype) for atoms in self.list_of_configurations]
-        self.positions_list = [torch.tensor(atoms.positions, dtype=self.float_dtype) for atoms in self.list_of_configurations]
+        This method:
+        - converts each configuration's cell and positions to PyTorch tensors
+          with the class float dtype, and stores them in `cell_list` and
+          `positions_list`;
+        - calls `_batch_and_mask_positions_and_cells` to build the padded
+          batched tensors and masks used internally by the neighbour-list
+          routines.
 
-        self._batch_and_mask_positions_and_cells()
+        Must be called before `calculate_neighbourlist`.
+        """
+       
+       self.cell_list = [torch.tensor(atoms.cell.array, dtype=self.float_dtype) for atoms in self.list_of_configurations]
+       self.positions_list = [torch.tensor(atoms.positions, dtype=self.float_dtype) for atoms in self.list_of_configurations]
+       
+       self._batch_and_mask_positions_and_cells()
 
     def _batch_and_mask_positions_and_cells(self):
         """
-        Returns the position and cell data in [num_batches, batch_size, 
-        dim(position / cell)] format and a mask tensor which allows to
-        map back to the lists.
+        Build padded batched tensors for positions and cells, plus a mask.
+
+        For each batch of configurations, this method constructs:
+        - `batch_positions_tensor` with shape (batch_size, n_max, 3), where
+          `n_max` is the maximum number of atoms in any configuration in that
+          batch; entries beyond the true atom count are zero-padded.
+        - `batch_cells_tensor` with shape (batch_size, 3, 3), containing one
+          cell matrix per configuration in the batch.
+        - `batch_masks_tensor` with shape (batch_size, n_max), where entries
+          are True for valid atoms and False for padding.
+
+        The tensors for all batches are stored in the lists:
+        `batch_positions_tensor_list`, `batch_cells_tensor_list`,
+        and `batch_masks_tensor_list`.
+
+        Notes
+        -----
+        This is an internal helper and assumes that `positions_list` and
+        `cell_list` have already been populated by `load_data`.
         """
 
         self.batch_positions_tensor_list = []
@@ -127,7 +153,36 @@ class NeighbourList:
 
     def calculate_neighbourlist(self, use_torch_compile=True):
         """
-        The money shot. 
+        Compute neighbour lists for all configurations in all batches.
+
+        Parameters
+        ----------
+        use_torch_compile : bool, optional
+            If True (default), use the `torch.compile`-optimised O(N^2)
+            backend; if False, use the uncompiled reference implementation.
+
+        Returns
+        -------
+        list of list
+            Outer list has length `num_batches`. Each element corresponds to
+            one batch and is itself a list of length `batch_size`, where each
+            entry is `[atom_idx, neighbour_idx, S, d]` for a single
+            configuration:
+                atom_idx : 1D LongTensor
+                    Indices of central atoms.
+                neighbour_idx : 1D LongTensor
+                    Indices of neighbour atoms.
+                S : LongTensor of shape (n_pairs, 3)
+                    Integer lattice shift vectors for each pair.
+                d : 1D Tensor
+                    Distances corresponding to each pair.
+
+        Notes
+        -----
+        Assumes `load_data()` has been called so that the batched position,
+        cell and mask tensors are available in
+        `batch_positions_tensor_list`, `batch_cells_tensor_list`, and
+        `batch_masks_tensor_list`.
         """
 
         r = []
@@ -142,7 +197,7 @@ class NeighbourList:
             batch_positions_tensor = self.batch_positions_tensor_list[batch_id].to(self.device)
             batch_cells_tensor = self.batch_cells_tensor_list[batch_id].to(self.device)
             batch_mask_tensor = self.batch_masks_tensor_list[batch_id].to(self.device)
-            lattice_shifts = self.calculate_batch_lattice_shifts(batch_cells_tensor,)
+            lattice_shifts = self._calculate_batch_lattice_shifts(batch_cells_tensor,)
 
             distance_matrix, criterion = neighbourlist_fn(batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, lattice_shifts, self.radius, self.tolerance)
 
@@ -161,24 +216,27 @@ class NeighbourList:
 
         return r
     
-    def calculate_batch_lattice_shifts(self, batch_cells_tensor):
+    def _calculate_batch_lattice_shifts(self, batch_cells_tensor):
         """
-        Estimates which periodic images of atoms need to be considered
-        given a cell and a radius. Keeps the image lattice shifts constant within a batch.
+        Compute a common set of lattice shift vectors for a batch of cells.
+
+        For a given cutoff radius and a batch of 3×3 cell matrices, this
+        estimates how many periodic images along each lattice direction must
+        be considered so that all neighbours within `self.radius` are captured
+        for every cell in the batch. A single, conservative set of shifts is
+        returned and reused for the whole batch.
+
+        Parameters
+        ----------
+        batch_cells_tensor : torch.Tensor, shape (n_cells, 3, 3)
+            Cell matrices for the configurations in the current batch.
+
+        Returns
+        -------
+        shifts : torch.Tensor, shape (n_shifts, 3)
+            Integer lattice shift vectors (in lattice coordinates) that
+            should be applied when building neighbour lists.
         """
-
-        device = batch_cells_tensor.device
-
-        #batch_cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)
-        # batch_cell_lengths =  torch.max(batch_cells_tensor, dim=-1) - torch.min(batch_cells_tensor, dim=-1)
-
-        #extents = (
-        #    batch_cells_tensor.max(dim=1).values
-        #    #- batch_cells_tensor.min(dim=1).values
-        #)  # (n_cells, 3)
-
-        #step = torch.clamp(extents, min=1e-8)
-        #max_n = torch.ceil(self.radius / step).amax(dim=0).to(self.int_dtype)
 
         # estimate from cell-vector norms
         cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)          # (n_cells, 3)
@@ -195,9 +253,9 @@ class NeighbourList:
         max_n = torch.maximum(n_from_lengths, n_from_extents).to(self.int_dtype)
 
         mesh = torch.meshgrid(
-            torch.arange(-max_n[0], max_n[0] + 1, dtype=self.int_dtype, device=device),
-            torch.arange(-max_n[1], max_n[1] + 1, dtype=self.int_dtype, device=device),
-            torch.arange(-max_n[2], max_n[2] + 1, dtype=self.int_dtype, device=device),
+            torch.arange(-max_n[0], max_n[0] + 1, dtype=self.int_dtype, device=batch_cells_tensor.device),
+            torch.arange(-max_n[1], max_n[1] + 1, dtype=self.int_dtype, device=batch_cells_tensor.device),
+            torch.arange(-max_n[2], max_n[2] + 1, dtype=self.int_dtype, device=batch_cells_tensor.device),
             indexing='ij'
         )
 
@@ -206,8 +264,36 @@ class NeighbourList:
 
     def _nlist_ON2(self, batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, lattice_shifts, radius, tolerance):
         """
-        Computes a distance squared matrix. In the comments, to explain the implementation, 
-        I use b for batch structure idx. 
+        O(N²) neighbour-list backend operating on a batched distance matrix.
+
+        Parameters
+        ----------
+        batch_positions_tensor : torch.Tensor, shape (B, N, 3)
+            Cartesian positions for a batch of configurations, padded to the
+            maximum number of atoms `N` in the batch.
+        batch_cells_tensor : torch.Tensor, shape (B, 3, 3)
+            Cell matrices for each configuration in the batch.
+        batch_mask_tensor : torch.Tensor, shape (B, N)
+            Boolean mask indicating which entries in `batch_positions_tensor`
+            correspond to real atoms (True) versus padding (False).
+        lattice_shifts : torch.Tensor, shape (L, 3)
+            Integer lattice shift vectors to apply (in lattice coordinates).
+        radius : float
+            Cutoff radius; pairs with distance < `radius` are kept.
+        tolerance : float
+            Lower distance bound used to filter out self-pairs and very
+            close numerical artefacts; pairs with distance < `tolerance`
+            are discarded.
+
+        Returns
+        -------
+        distance_matrix : torch.Tensor, shape (B, L, N, N)
+            Pairwise distances between atoms and their periodic images for
+            each batch (B), lattice shift (L) and atom pair (N × N).
+        criterion : torch.Tensor, shape (B, L, N, N)
+            Boolean mask indicating which pairs satisfy the cutoff and masking
+            criteria, i.e. within `[tolerance, radius)` and both atoms valid
+            according to `batch_mask_tensor`.
         """
 
         # 1, lc, 3  X b, 1, 3, 3 -> b, lc, 3
