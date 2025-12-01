@@ -169,8 +169,30 @@ class NeighbourList:
 
         device = batch_cells_tensor.device
 
-        batch_cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)
-        max_n = torch.max(torch.ceil(self.radius / batch_cell_lengths), dim=0).values
+        #batch_cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)
+        # batch_cell_lengths =  torch.max(batch_cells_tensor, dim=-1) - torch.min(batch_cells_tensor, dim=-1)
+
+        #extents = (
+        #    batch_cells_tensor.max(dim=1).values
+        #    #- batch_cells_tensor.min(dim=1).values
+        #)  # (n_cells, 3)
+
+        #step = torch.clamp(extents, min=1e-8)
+        #max_n = torch.ceil(self.radius / step).amax(dim=0).to(self.int_dtype)
+
+        # estimate from cell-vector norms
+        cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)          # (n_cells, 3)
+        n_from_lengths = torch.ceil(self.radius / torch.clamp(cell_lengths, 1e-8)).amax(dim=0)
+
+        # estimate from coordinate extents
+        extents = (
+            batch_cells_tensor.max(dim=1).values
+            - batch_cells_tensor.min(dim=1).values
+        )  # (n_cells, 3)
+        n_from_extents = torch.ceil(self.radius / torch.clamp(extents, 1e-8)).amax(dim=0)
+
+        # take the smaller (elementwise)
+        max_n = torch.maximum(n_from_lengths, n_from_extents).to(self.int_dtype)
 
         mesh = torch.meshgrid(
             torch.arange(-max_n[0], max_n[0] + 1, dtype=self.int_dtype, device=device),
