@@ -1,7 +1,7 @@
-from collections import Counter
 import torch
+from collections import Counter
 from matscipy.neighbours import neighbour_list as matscipy_neighbour_list
-from neighbourlist import NeighbourList
+from pynl import NeighbourList
 
 
 def _check_neighbourlist_ON2_matches_matscipy(atoms, radius: float, use_torch_compile=False):
