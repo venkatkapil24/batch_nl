@@ -21,10 +21,6 @@ This installs the package as "pynl-torch", importable as:
     import pynl
     from pynl import NeighbourList
 
-Once published on PyPI, installation will be as simple as:
-
-    pip install pynl-torch
-
 ---------------------------------------------------------------------
 
 ## Quick start
@@ -179,9 +175,6 @@ Runtime dependencies (managed via pyproject.toml):
 - ase
 - matscipy
 
-Install a PyTorch build appropriate for your hardware first (CPU or CUDA),
-then install pynl-torch from source as shown above.
-
 ---------------------------------------------------------------------
 
 ## Testing
@@ -191,7 +184,7 @@ From the repository root:
     pytest
 
 Tests compare the O(N^2) neighbour list against matscipy neighbour-list
-output across a range of crystal structures and cell types (oblique, cubic,
+output across a range of crystal structures and cell types taken from vesin and torch-sim (oblique, cubic,
 tetragonal, orthorhombic, hcp, rhombohedral, triclinic, etc.).
 
 ---------------------------------------------------------------------
