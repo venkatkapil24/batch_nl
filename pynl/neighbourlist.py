@@ -213,8 +213,7 @@ class NeighbourList:
 
                 d = distance_matrix[i, lattice_shift_idx, atom_idx, neighbour_idx]
 
-                b_r.append([atom_idx, neighbour_idx, S,  d])
-                #b_r.append([atom_idx, neighbour_idx, S, D, d])
+                b_r.append([atom_idx, neighbour_idx, S, D, d])
 
             r.append(b_r)
 
