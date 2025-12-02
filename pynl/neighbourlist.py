@@ -209,7 +209,7 @@ class NeighbourList:
 
                 S = batch_lattice_shifts_tensor[lattice_shift_idx]
 
-                D = batch_positions_tensor[i, neighbour_idx] - batch_positions_tensor[i, atom_idx] + batch_cartesian_lattice_shifts_tensor.squeeze(0)[lattice_shift_idx]
+                D = batch_positions_tensor[i, neighbour_idx] - batch_positions_tensor[i, atom_idx] + batch_cartesian_lattice_shifts_tensor[i, lattice_shift_idx]
 
                 d = distance_matrix[i, lattice_shift_idx, atom_idx, neighbour_idx]
 
@@ -242,17 +242,17 @@ class NeighbourList:
         """
 
         # estimate from cell-vector norms
-        cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)          # (n_cells, 3)
+        cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)
         n_from_lengths = torch.ceil(self.radius / torch.clamp(cell_lengths, 1e-8)).amax(dim=0)
 
         # estimate from coordinate extents
         extents = (
             batch_cells_tensor.max(dim=1).values
             - batch_cells_tensor.min(dim=1).values
-        )  # (n_cells, 3)
+        )
         n_from_extents = torch.ceil(self.radius / torch.clamp(extents, 1e-8)).amax(dim=0)
 
-        # take the smaller (elementwise)
+        # take the larger
         max_n = torch.maximum(n_from_lengths, n_from_extents).to(self.int_dtype)
 
         mesh = torch.meshgrid(
