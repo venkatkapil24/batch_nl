@@ -197,9 +197,9 @@ class NeighbourList:
             batch_positions_tensor = self.batch_positions_tensor_list[batch_id].to(self.device)
             batch_cells_tensor = self.batch_cells_tensor_list[batch_id].to(self.device)
             batch_mask_tensor = self.batch_masks_tensor_list[batch_id].to(self.device)
-            lattice_shifts = self._calculate_batch_lattice_shifts(batch_cells_tensor,)
+            batch_lattice_shifts_tensor, batch_cartesian_lattice_shifts_tensor = self._calculate_batch_lattice_shifts(batch_cells_tensor,)
 
-            distance_matrix, criterion = neighbourlist_fn(batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, lattice_shifts, self.radius, self.tolerance)
+            distance_matrix, criterion = neighbourlist_fn(batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, batch_cartesian_lattice_shifts_tensor, self.radius, self.tolerance)
 
             b_r = []
 
@@ -207,10 +207,13 @@ class NeighbourList:
               
                 lattice_shift_idx, atom_idx, neighbour_idx = torch.nonzero(criterion[i], as_tuple=True)
 
-                d = distance_matrix[i, lattice_shift_idx, atom_idx, neighbour_idx]
-                S = lattice_shifts[lattice_shift_idx]
+                S = batch_lattice_shifts_tensor[lattice_shift_idx]
 
-                b_r.append([atom_idx, neighbour_idx, S, d])
+                D = batch_positions_tensor[i, neighbour_idx] - batch_positions_tensor[i, atom_idx] + batch_cartesian_lattice_shifts_tensor[i, lattice_shift_idx]
+
+                d = distance_matrix[i, lattice_shift_idx, atom_idx, neighbour_idx]
+
+                b_r.append([atom_idx, neighbour_idx, S, D, d])
 
             r.append(b_r)
 
@@ -239,17 +242,17 @@ class NeighbourList:
         """
 
         # estimate from cell-vector norms
-        cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)          # (n_cells, 3)
+        cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)
         n_from_lengths = torch.ceil(self.radius / torch.clamp(cell_lengths, 1e-8)).amax(dim=0)
 
         # estimate from coordinate extents
         extents = (
             batch_cells_tensor.max(dim=1).values
             - batch_cells_tensor.min(dim=1).values
-        )  # (n_cells, 3)
+        )
         n_from_extents = torch.ceil(self.radius / torch.clamp(extents, 1e-8)).amax(dim=0)
 
-        # take the smaller (elementwise)
+        # take the larger
         max_n = torch.maximum(n_from_lengths, n_from_extents).to(self.int_dtype)
 
         mesh = torch.meshgrid(
@@ -260,9 +263,11 @@ class NeighbourList:
         )
 
         mesh = torch.stack(mesh, dim=-1).reshape(-1, 3)
-        return mesh
 
-    def _nlist_ON2(self, batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, lattice_shifts, radius, tolerance):
+        batch_cartesian_lattice_shifts_tensor = torch.einsum("li,bij->blj", mesh.to(batch_cells_tensor.dtype), batch_cells_tensor)
+        return mesh, batch_cartesian_lattice_shifts_tensor
+
+    def _nlist_ON2(self, batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, batch_cartesian_lattice_shifts_tensor, radius, tolerance):
         """
         O(N²) neighbour-list backend operating on a batched distance matrix.
 
@@ -296,11 +301,8 @@ class NeighbourList:
             according to `batch_mask_tensor`.
         """
 
-        # 1, lc, 3  X b, 1, 3, 3 -> b, lc, 3
-        lattice_shifts = torch.einsum("li,bij->blj", lattice_shifts.to(batch_cells_tensor.dtype), batch_cells_tensor)
-
         # (b, lc, 1, 3) + (b, 1, n, 3) -> b, lc, n, 3
-        batch_shifted_positions_tensor = lattice_shifts.unsqueeze(-2) + batch_positions_tensor.unsqueeze(1)
+        batch_shifted_positions_tensor = batch_cartesian_lattice_shifts_tensor.unsqueeze(-2) + batch_positions_tensor.unsqueeze(1)
 
         # b, 1, 1, n, 3 - b, lc, n, 1, 3 ->  b, lc, n, n
         distance_matrix = torch.sqrt(((batch_positions_tensor.unsqueeze(1).unsqueeze(3) - batch_shifted_positions_tensor.unsqueeze(2))**2).sum(dim=-1))

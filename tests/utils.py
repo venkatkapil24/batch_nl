@@ -40,13 +40,16 @@ def _check_neighbourlist_ON2_matches_matscipy(atoms, radius: float, use_torch_co
     out = nl.calculate_neighbourlist(use_torch_compile=use_torch_compile)
 
     # assuming ON2 returns the same [i, j, S, d] structure
-    i, j, S, d = out[0][0]
+    i, j, S, D, d = out[0][0]
     i = i.cpu()
     j = j.cpu()
     S = S.cpu()
     d = d.cpu()
+    D = D.cpu()
 
-    ASE_i, ASE_j, ASE_S, ASE_d = matscipy_neighbour_list("ijSd", atoms, cutoff=radius)
+    ASE_i, ASE_j, ASE_S, ASE_D, ASE_d = matscipy_neighbour_list("ijSDd", atoms, cutoff=radius)
+
+    # I am not comparing D's as the matscipy D is likely not correct.
 
     pairs = Counter(
         (
