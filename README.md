@@ -16,11 +16,6 @@ From source (recommended for now):
     cd pynl
     pip install -e .
 
-This installs the package as "pynl-torch", importable as:
-
-    import pynl
-    from pynl import NeighbourList
-
 ---------------------------------------------------------------------
 
 ## Quick start
@@ -164,16 +159,6 @@ Main methods:
   - j: 1D tensor of neighbour atom indices
   - S: integer lattice shifts (n_pairs, 3)
   - d: 1D tensor of distances
-
----------------------------------------------------------------------
-
-## Dependencies
-
-Runtime dependencies (managed via pyproject.toml):
-
-- torch>=1.12
-- ase
-- matscipy
 
 ---------------------------------------------------------------------
 
