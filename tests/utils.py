@@ -42,11 +42,11 @@ def _check_neighbourlist_ON2_matches_matscipy(atoms, cutoff: float, use_torch_co
 
     # assuming ON2 returns the same [i, j, S, d] structure
     i, j, S, D, d = out
-    i = i.cpu()
-    j = j.cpu()
-    S = S.cpu()
-    d = d.cpu()
-    D = D.cpu()
+    i = i[0].cpu()
+    j = j[0].cpu()
+    S = S[0].cpu()
+    d = d[0].cpu()
+    D = D[0].cpu()
 
     matscipy_i, matscipy_j, matscipy_S, matscipy_D, matscipy_d = matscipy_neighbour_list("ijSDd", atoms, cutoff=cutoff)
 
