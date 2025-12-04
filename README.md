@@ -1,13 +1,3 @@
-# pynl
-
-Efficient and batched PyTorch-based neighbour list builder for atomistic simulations.
-
-pynl provides a simple, GPU-friendly neighbour-list API that takes a list
-of periodic ASE Atoms objects, packs them into fixed-size batches, and
-builds neighbour lists using vectorised PyTorch operations.
-
----------------------------------------------------------------------
-
 ## Installation
 
 From source (recommended for now):
@@ -27,7 +17,7 @@ Single configuration:
     from pynl import NeighbourList
 
     device = "cuda:0"   # or "cpu"
-    radius = 3.0        # cutoff in Angstrom
+    cutoff = 3.0        # cutoff in Angstrom
 
     # Build a simple test system: diamond C 2x2x2
     base = bulk("C", "diamond", a=3.57)
@@ -36,20 +26,35 @@ Single configuration:
 
     # Construct neighbour list object
     nl = NeighbourList(
-        list_of_configurations=[carbon],
-        radius=radius,
-        batch_size=1,
+        list_of_positions=[carbon.positions],
+        list_of_cells=[carbon.cell.array],
+        cutoff=cutoff,
         device=device,
     )
 
-    # Convert ASE structures to batched tensors
+    # Convert input arrays to batched tensors
     nl.load_data()
 
-    # Compute neighbour list with the O(N^2) backend (no torch.compile)
-    out = nl.calculate_neighbourlist(use_torch_compile=False)
+    # Compute neighbour list (no torch.compile)
+    r_edges, r_S_int, r_S_cart, r_d = nl.calculate_neighbourlist(
+        use_torch_compile=False
+    )
 
-    # Unpack neighbours for the first (and only) configuration in the first batch
-    i, j, S, d = out[0][0]  # indices, neighbour indices, lattice shifts, distances
+    # Convert to matscipy-style output
+    (
+        atom_index_list,
+        neighbor_index_list,
+        int_shift_list,
+        cart_shift_list,
+        distance_list,
+    ) = nl.get_matscipy_output_from_batch_output(
+        r_edges, r_S_int, r_S_cart, r_d
+    )
+
+    i = atom_index_list[0]
+    j = neighbor_index_list[0]
+    S = int_shift_list[0]
+    d = distance_list[0]
 
     print("Number of neighbour pairs:", len(i))
     print("First few pairs:")
@@ -57,15 +62,17 @@ Single configuration:
         print(
             f"{int(i[k])} -> {int(j[k])}, "
             f"S={S[k].tolist()}, "
-            f"d={float(d[k]):.3f} Angstrom"
+            f"d={float(d[k]):.3f} Å"
         )
 
-Batched usage (multiple structures):
+---------------------------------------------------------------------
+
+Batched usage (multiple configurations):
 
     from ase.build import bulk
     from pynl import NeighbourList
 
-    radius = 3.0
+    cutoff = 3.0
     device = "cuda:0"
 
     base = bulk("C", "diamond", a=3.57)
@@ -75,21 +82,37 @@ Batched usage (multiple structures):
         base * (4, 4, 4),
     ]
 
+    list_of_positions = [atoms.positions for atoms in configs]
+    list_of_cells     = [atoms.cell.array for atoms in configs]
+
     nl = NeighbourList(
-        list_of_configurations=configs,
-        radius=radius,
-        batch_size=2,   # process two configurations per batch
+        list_of_positions=list_of_positions,
+        list_of_cells=list_of_cells,
+        cutoff=cutoff,
         device=device,
     )
     nl.load_data()
-    batched_out = nl.calculate_neighbourlist(use_torch_compile=True)
 
-    for batch_id, batch_result in enumerate(batched_out):
-        for local_idx, (i, j, S, d) in enumerate(batch_result):
-            print(
-                f"Batch {batch_id}, structure {local_idx}: "
-                f"{len(i)} neighbour pairs"
-            )
+    r_edges, r_S_int, r_S_cart, r_d = nl.calculate_neighbourlist(
+        use_torch_compile=True
+    )
+
+    (
+        atom_index_list,
+        neighbor_index_list,
+        int_shift_list,
+        cart_shift_list,
+        distance_list,
+    ) = nl.get_matscipy_output_from_batch_output(
+        r_edges, r_S_int, r_S_cart, r_d
+    )
+
+    for cfg_idx in range(len(configs)):
+        i = atom_index_list[cfg_idx]
+        j = neighbor_index_list[cfg_idx]
+        print(
+            f"Configuration {cfg_idx}: {len(i)} neighbour pairs"
+        )
 
 ---------------------------------------------------------------------
 
@@ -100,65 +123,64 @@ NeighbourList:
     from pynl import NeighbourList
 
     nl = NeighbourList(
-        list_of_configurations: list,
-        radius: float,
-        batch_size: int,
+        list_of_positions: list,
+        list_of_cells: list,
+        cutoff: float,
         device: str | torch.device | None = None,
     )
 
 Parameters:
 
-- list_of_configurations:
-  list of ASE-like Atoms objects (with .positions, .cell, and periodic
-  boundary conditions).
+- list_of_positions:
+  List of (N_i, 3) position arrays (one per configuration).
 
-- radius:
-  scalar cutoff radius (Angstrom).
+- list_of_cells:
+  List of (3, 3) cell matrices (one per configuration).
+  Must match the length of list_of_positions.
 
-- batch_size:
-  number of configurations to process together in one batch.
+- cutoff:
+  Scalar cutoff radius (Angstrom).
 
 - device:
-  "cpu", "cuda", "cuda:0", etc., or a torch.device. If None, falls back
-  to a default device.
+  "cpu", "cuda", "cuda:0", etc., or torch.device.
+  If None, defaults to CUDA if available, otherwise CPU.
+
+All configurations are treated as a single batch.
 
 Main methods:
 
 - load_data()
 
-  Converts input configurations into PyTorch tensors and packs positions
-  and cells into padded tensors of shape (batch_size, n_max, 3) with a
-  corresponding boolean mask.
+      Converts position and cell lists into padded tensors:
+      - batch_positions_tensor : (B, N_max, 3)
+      - batch_mask_tensor      : (B, N_max)
+      - batch_cell_tensor      : (B, 3, 3)
+      Moves all to the configured device.
 
-- calculate_neighbourlist(use_torch_compile: bool = True)
+- calculate_neighbourlist(use_torch_compile=True)
 
-  Computes neighbour lists for all configurations in all batches using
-  the O(N^2) backend.
+      Computes neighbour lists using the O(N^2) backend.
+      If use_torch_compile=True, uses torch.compile when available.
 
-  If use_torch_compile=True, uses a torch.compile-optimised kernel
-  (where available).
+      Returns:
+          r_edges                 (2, E)
+          r_integer_lattice_shifts (E, 3)
+          r_cartesian_lattice_shifts (E, 3)
+          r_distances              (E,)
 
-  Returns a nested list:
+      Indices in r_edges are global over all configurations.
 
-      [
-        [
-          [i, j, S, d],   # configuration 0 in batch 0
-          [i, j, S, d],   # configuration 1 in batch 0
-          ...
-        ],
-        [
-          [i, j, S, d],   # configuration 0 in batch 1
-          ...
-        ],
-        ...
-      ]
+- get_matscipy_output_from_batch_output(...)
 
-  where each [i, j, S, d] consists of:
+      Converts flattened batched neighbour-list output into
+      per-configuration lists:
 
-  - i: 1D tensor of central atom indices
-  - j: 1D tensor of neighbour atom indices
-  - S: integer lattice shifts (n_pairs, 3)
-  - d: 1D tensor of distances
+      Returns:
+          atom_index_list      (list of 1D tensors)
+          neighbor_index_list  (list of 1D tensors)
+          int_shift_list       (list of (n_i, 3) tensors)
+          cart_shift_list      (list of (n_i, 3) tensors)
+          distance_list        (list of 1D tensors)
 
 ---------------------------------------------------------------------
 
@@ -168,24 +190,20 @@ From the repository root:
 
     pytest
 
-Tests compare the O(N^2) neighbour list against matscipy neighbour-list
-output across a range of crystal structures and cell types taken from vesin and torch-sim (oblique, cubic,
-tetragonal, orthorhombic, hcp, rhombohedral, triclinic, etc.).
+Tests compare the O(N^2) neighbour-list output with matscipy over
+various crystal systems and cell geometries (cubic, tetragonal,
+orthorhombic, hcp, rhombohedral, triclinic, oblique, etc.).
 
 ---------------------------------------------------------------------
 
 ## License
 
-The pynl project is licensed under the Academic Software License v1.0 (ASL) - see the LICENSE file for details.
+The pynl project is licensed under the Academic Software License v1.0 (ASL).
+See the LICENSE file for details.
 
-Copyright
+[pynl] is (c) 2024, Venkat Kapil
 
-[pynl] is (c) 2024, [Venkat Kapil]
+Distributed under the ASL v1.0 without any warranty; see the license
+for details.
 
-[pynl] is published and distributed under the Academic Software License v1.0 (ASL).
-
-[pynl] is distributed in the hope that it will be useful for non-commercial academic research, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the ASL for more details.
-
-You should have received a copy of the ASL along with this program; if not, write to [venkat.kapil@gmail.com]. It is also published at [ASL-link-here].
-
-You may contact the original licensor at [venkat.kapil@gmail.com].
+Contact: venkat.kapil@gmail.com
