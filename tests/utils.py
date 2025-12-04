@@ -4,7 +4,7 @@ from matscipy.neighbours import neighbour_list as matscipy_neighbour_list
 from pynl import NeighbourList
 
 
-def _check_neighbourlist_ON2_matches_matscipy(atoms, radius: float, use_torch_compile=False):
+def _check_neighbourlist_ON2_matches_matscipy(atoms, cutoff: float, use_torch_compile=False):
     """
     Compare the O(N²) neighbour list against the matscipy reference.
 
@@ -17,8 +17,8 @@ def _check_neighbourlist_ON2_matches_matscipy(atoms, radius: float, use_torch_co
     ----------
     atoms : Atoms
         Single ASE-like Atoms object to test.
-    radius : float
-        Cutoff radius for the neighbour list.
+    cutoff : float
+        Cutoff cutoff for the neighbour list.
     use_torch_compile : bool, optional
         If True, use the `torch.compile`-optimised O(N²) kernel; otherwise
         use the uncompiled version.
@@ -31,8 +31,9 @@ def _check_neighbourlist_ON2_matches_matscipy(atoms, radius: float, use_torch_co
     """
 
     nl = NeighbourList(
-        list_of_configurations=[atoms],
-        radius=radius,
+        list_of_positions=[atoms.positions],
+        list_of_cells=[atoms.cell.array],
+        cutoff=cutoff,
         batch_size=1,
         device=None,
     )
@@ -47,7 +48,7 @@ def _check_neighbourlist_ON2_matches_matscipy(atoms, radius: float, use_torch_co
     d = d.cpu()
     D = D.cpu()
 
-    ASE_i, ASE_j, ASE_S, ASE_D, ASE_d = matscipy_neighbour_list("ijSDd", atoms, cutoff=radius)
+    ASE_i, ASE_j, ASE_S, ASE_D, ASE_d = matscipy_neighbour_list("ijSDd", atoms, cutoff=cutoff)
 
     # I am not comparing D's as the matscipy D is likely not correct.
 
