@@ -16,7 +16,7 @@ def _check_neighbourlist_ON2_matches_matscipy(atoms, cutoff: float, use_torch_co
     Parameters
     ----------
     atoms : Atoms
-        Single ASE-like Atoms object to test.
+        Single matscipy-like Atoms object to test.
     cutoff : float
         Cutoff cutoff for the neighbour list.
     use_torch_compile : bool, optional
@@ -41,14 +41,14 @@ def _check_neighbourlist_ON2_matches_matscipy(atoms, cutoff: float, use_torch_co
     out = nl.calculate_neighbourlist(use_torch_compile=use_torch_compile)
 
     # assuming ON2 returns the same [i, j, S, d] structure
-    i, j, S, D, d = out[0][0]
+    i, j, S, D, d = out
     i = i.cpu()
     j = j.cpu()
     S = S.cpu()
     d = d.cpu()
     D = D.cpu()
 
-    ASE_i, ASE_j, ASE_S, ASE_D, ASE_d = matscipy_neighbour_list("ijSDd", atoms, cutoff=cutoff)
+    matscipy_i, matscipy_j, matscipy_S, matscipy_D, matscipy_d = matscipy_neighbour_list("ijSDd", atoms, cutoff=cutoff)
 
     # I am not comparing D's as the matscipy D is likely not correct.
 
@@ -62,22 +62,22 @@ def _check_neighbourlist_ON2_matches_matscipy(atoms, cutoff: float, use_torch_co
         for k in range(len(i))
     )
 
-    ase_pairs = Counter(
+    matscipy_pairs = Counter(
         (
-            int(ASE_i[k].item()),
-            int(ASE_j[k].item()),
-            tuple(ASE_S[k].tolist()),
-            round(float(ASE_d[k]), 3),
+            int(matscipy_i[k].item()),
+            int(matscipy_j[k].item()),
+            tuple(matscipy_S[k].tolist()),
+            round(float(matscipy_d[k]), 3),
         )
-        for k in range(len(ASE_i))
+        for k in range(len(matscipy_i))
     )
 
-    missing = ase_pairs - pairs   # in matscipy but not here
-    extra = pairs - ase_pairs     # here but not in matscipy
+    missing = matscipy_pairs - pairs   # in matscipy but not here
+    extra = pairs - matscipy_pairs     # here but not in matscipy
 
     assert not missing and not extra, (
         f"Neighbour list mismatch\n"
-        f"Missing (ASE - ON2): {missing}\n"
-        f"Extra (ON2 - ASE):   {extra}"
+        f"Missing (matscipy - ON2): {missing}\n"
+        f"Extra (ON2 - matscipy):   {extra}"
     )
 
