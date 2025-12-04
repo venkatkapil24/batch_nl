@@ -7,10 +7,11 @@ class NeighbourList:
     """
     Batched neighbour-list builder using PyTorch.
 
-    Given a list of periodic configurations, this class builds neighbour
-    lists for all structures using a common cutoff radius. Configurations 
-    are grouped into fixed-size batches and padded, so the heavy work
-    can be done with vectorised tensor operations on a chosen device.
+    This class constructs neighbour lists for a set of periodic atomic
+    configurations using a common cutoff radius. All configurations are
+    treated as a single batch: they are padded to a common shape and
+    processed together on the specified device, enabling fully vectorised
+    neighbour-list construction across the batch.
     """
 
     def __init__(self,
@@ -19,16 +20,26 @@ class NeighbourList:
              cutoff: float,
              device: str | torch.device | None = None):
         """
+        Initialize a batched neighbour-list calculator for a single batch
+        of configurations.
+
         Parameters
         ----------
-        list_of_configurations : list of Atoms
-            List of ASE-like Atoms objects with `.positions` and `.cell`.
+        list_of_positions : list of array-like
+            A list where each element is an (N_i, 3) array containing the
+            Cartesian positions for configuration i in the batch.
+
+        list_of_cells : list of array-like
+            A list where each element is a (3, 3) cell matrix corresponding
+            to configuration i. Must have the same length as `list_of_positions`.
 
         cutoff : float
-            Cutoff radius.
+            Cutoff radius used for neighbour detection. Must be positive.
 
-        device : str or torch.device
-            Compute device ("cpu", "cuda", or torch.device(...)).
+        device : str or torch.device, optional
+            Device on which all batched tensors will be allocated
+            ("cpu", "cuda", or a torch.device instance). If None, CUDA is
+            used when available, otherwise CPU.
         """
 
         if len(list_of_positions) != len(list_of_cells):
@@ -72,15 +83,10 @@ class NeighbourList:
 
     def load_data(self):
         """
-        Convert the input configurations to tensor form and prepare batches.
+        Convert input positions and cells into padded batched tensors.
 
-        This method:
-        - converts each configuration's cell and positions to PyTorch tensors
-          with the class float dtype, and stores them in `cell_list` and
-          `positions_list`;
-        - calls `_batch_and_mask_positions_and_cells` to build the padded
-          batched tensors and masks used internally by the neighbour-list
-          routines.
+        This populates `batch_positions_tensor`, `batch_mask_tensor`,
+        and `batch_cell_tensor`, and moves them to the configured device.
 
         Must be called before `calculate_neighbourlist`.
         """
@@ -107,12 +113,36 @@ class NeighbourList:
 
 
     def calculate_neighbourlist(self, use_torch_compile: bool = True):
+        """
+        Compute the batched neighbour list for all configurations.
+
+        Notes
+        -----
+        `load_data()` must be called before invoking this method.
+
+        Parameters
+        ----------
+        use_torch_compile : bool, optional
+            If True, use the torch.compile-optimised backend; otherwise use
+            the plain PyTorch implementation.
+
+        Returns
+        -------
+        r_edges : torch.Tensor
+            Tensor of shape (2, E) with flattened source and neighbour
+            atom indices.
+        r_integer_lattice_shifts : torch.Tensor
+            Tensor of shape (E, 3) with integer lattice shift vectors.
+        r_cartesian_lattice_shifts : torch.Tensor
+            Tensor of shape (E, 3) with Cartesian lattice shift vectors.
+        r_distances : torch.Tensor
+            Tensor of shape (E,) with interatomic distances.
+        """
 
         if use_torch_compile:
             neighbourlist_fn = self._nlist_ON2_compiled
         else:
             neighbourlist_fn = self._nlist_ON2
-
 
         # the tensors are aready in GPU at this point
         # use compiled function if user wants
@@ -148,8 +178,21 @@ class NeighbourList:
 
     def _calculate_batch_lattice_shifts(self, batch_cells_tensor, cutoff):
         """
-        Compute a common set of lattice shift vectors for a batch of cells.
-        ...
+        Compute the lattice shift vectors and their Cartesian images.
+
+        Parameters
+        ----------
+        batch_cells_tensor : torch.Tensor
+            Tensor of shape (B, 3, 3) with cell matrices.
+        cutoff : float
+            Cutoff radius used to determine the required lattice shifts.
+
+        Returns
+        -------
+        batch_lattice_shifts_tensor : torch.Tensor
+            Tensor of shape (L, 3) with integer lattice shift vectors.
+        batch_cartesian_lattice_shifts_tensor : torch.Tensor
+            Tensor of shape (B, L, 3) with corresponding Cartesian shifts.
         """
 
         # estimate from cell-vector norms
@@ -192,11 +235,31 @@ class NeighbourList:
         tolerance,
     ):
         """
-        Full O(N^2) neighbour-list backend for a batch:
-        - computes lattice shifts
-        - computes distances
-        - computes criterion mask
-        Returns distances + both integer and cartesian lattice shifts.
+        Full O(N^2) neighbour-list backend for a single batch.
+
+        Parameters
+        ----------
+        batch_positions_tensor : torch.Tensor
+            Tensor of shape (B, N, 3) with batched atomic positions.
+        batch_cells_tensor : torch.Tensor
+            Tensor of shape (B, 3, 3) with batched cell matrices.
+        batch_mask_tensor : torch.Tensor
+            Boolean tensor of shape (B, N) marking valid atoms.
+        cutoff : float
+            Cutoff radius for neighbour detection.
+        tolerance : float
+            Lower distance bound used to exclude self/near-self images.
+
+        Returns
+        -------
+        distance_matrix : torch.Tensor
+            Tensor of shape (B, L, N, N) with pairwise distances.
+        criterion : torch.Tensor
+            Boolean tensor of shape (B, L, N, N) marking neighbour pairs.
+        batch_lattice_shifts_tensor : torch.Tensor
+            Tensor of shape (L, 3) with integer lattice shift vectors.
+        batch_cartesian_lattice_shifts_tensor : torch.Tensor
+            Tensor of shape (B, L, 3) with Cartesian lattice shift vectors.
         """
 
         # (L, 3), (B, L, 3)
@@ -237,11 +300,41 @@ class NeighbourList:
 
     def get_matscipy_output_from_batch_output(
         self,
-        r_edges: torch.Tensor,                    # (2, E) global atom indices
+        r_edges: torch.Tensor,                    # (2, E) 
         r_integer_lattice_shifts: torch.Tensor,   # (E, 3)
         r_cartesian_lattice_shifts: torch.Tensor, # (E, 3)
         r_distances: torch.Tensor,                # (E,)
     ):
+        """
+        Convert flattened batched neighbour-list output to per-configuration
+        matscipy-style lists.
+
+        Parameters
+        ----------
+        r_edges : torch.Tensor
+            Tensor of shape (2, E) with flattened source and neighbour
+            atom indices.
+        r_integer_lattice_shifts : torch.Tensor
+            Tensor of shape (E, 3) with integer lattice shift vectors.
+        r_cartesian_lattice_shifts : torch.Tensor
+            Tensor of shape (E, 3) with Cartesian lattice shift vectors.
+        r_distances : torch.Tensor
+            Tensor of shape (E,) with interatomic distances.
+
+        Returns
+        -------
+        atom_index_list : list of torch.Tensor
+            Per-configuration tensors of source atom indices.
+        neighbor_index_list : list of torch.Tensor
+            Per-configuration tensors of neighbour atom indices.
+        int_shift_list : list of torch.Tensor
+            Per-configuration tensors of integer lattice shifts.
+        cart_shift_list : list of torch.Tensor
+            Per-configuration tensors of Cartesian lattice shifts.
+        distance_list : list of torch.Tensor
+            Per-configuration tensors of interatomic distances.
+        """
+        
         # atoms per config: (B,)
         lengths = self.batch_mask_tensor.sum(dim=-1, dtype=torch.long)
         # offsets[i] = total atoms in all previous configs
