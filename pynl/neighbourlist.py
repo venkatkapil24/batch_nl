@@ -304,6 +304,7 @@ class NeighbourList:
         r_integer_lattice_shifts: torch.Tensor,   # (E, 3)
         r_cartesian_lattice_shifts: torch.Tensor, # (E, 3)
         r_distances: torch.Tensor,                # (E,)
+        device: str | torch.device | None = None 
     ):
         """
         Convert flattened batched neighbour-list output to per-configuration
@@ -334,6 +335,11 @@ class NeighbourList:
         distance_list : list of torch.Tensor
             Per-configuration tensors of interatomic distances.
         """
+    
+        elif not isinstance(device,  (str, torch.device)):
+            raise TypeError(f"device should be a string or torch.device, got {type(device).__name__}.")
+        else:
+            self.device = torch.device(device)
         
         # atoms per config: (B,)
         lengths = self.batch_mask_tensor.sum(dim=-1, dtype=torch.long)
@@ -361,12 +367,21 @@ class NeighbourList:
             j_global = r_edges[1, mask]
             i_local = i_global - start
             j_local = j_global - start
-
-            atom_index_list.append(i_local.to('cpu'))
-            neighbor_index_list.append(j_local.to('cpu'))
-            int_shift_list.append(r_integer_lattice_shifts[mask].to('cpu'))
-            cart_shift_list.append(r_cartesian_lattice_shifts[mask].to('cpu'))
-            distance_list.append(r_distances[mask].to('cpu'))
+                
+            if device == "cpu":
+                atom_index_list.append(i_local.to('cpu'))
+                neighbor_index_list.append(j_local.to('cpu'))
+                int_shift_list.append(r_integer_lattice_shifts[mask].to('cpu'))
+                cart_shift_list.append(r_cartesian_lattice_shifts[mask].to('cpu'))
+                distance_list.append(r_distances[mask].to('cpu'))
+                
+            else:
+                atom_index_list.append(i_local)
+                neighbor_index_list.append(j_local)
+                int_shift_list.append(r_integer_lattice_shifts[mask])
+                cart_shift_list.append(r_cartesian_lattice_shifts[mask])
+                distance_list.append(r_distances[mask])
+                
 
         return (
             atom_index_list,
