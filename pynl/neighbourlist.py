@@ -336,11 +336,14 @@ class NeighbourList:
             Per-configuration tensors of interatomic distances.
         """
     
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         elif not isinstance(device,  (str, torch.device)):
             raise TypeError(f"device should be a string or torch.device, got {type(device).__name__}.")
         else:
             self.device = torch.device(device)
-        
+ 
         # atoms per config: (B,)
         lengths = self.batch_mask_tensor.sum(dim=-1, dtype=torch.long)
         # offsets[i] = total atoms in all previous configs
