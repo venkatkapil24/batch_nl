@@ -178,53 +178,97 @@ class NeighbourList:
 
     def _calculate_batch_lattice_shifts(self, batch_cells_tensor, cutoff):
         """
-        Compute the lattice shift vectors and their Cartesian images.
+        Matscipy-style lattice shifts based on bin geometry.
 
         Parameters
         ----------
         batch_cells_tensor : torch.Tensor
-            Tensor of shape (B, 3, 3) with cell matrices.
+            Tensor of shape (B, 3, 3) with cell matrices (rows = lattice vectors).
         cutoff : float
-            Cutoff radius used to determine the required lattice shifts.
+            Cutoff radius.
 
         Returns
         -------
         batch_lattice_shifts_tensor : torch.Tensor
-            Tensor of shape (L, 3) with integer lattice shift vectors.
+            (L, 3) integer lattice shift vectors S.
         batch_cartesian_lattice_shifts_tensor : torch.Tensor
-            Tensor of shape (B, L, 3) with corresponding Cartesian shifts.
+            (B, L, 3) Cartesian shifts S · h.
+        config_lattice_shift_extents : torch.Tensor
+            (B, 3) with |S_alpha| extents, same for all configs.
         """
+        device = batch_cells_tensor.device
+        dtype = batch_cells_tensor.dtype
+        B = batch_cells_tensor.shape[0]
 
-        # estimate from cell-vector norms
-        cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)
-        n_from_lengths = torch.ceil(cutoff / torch.clamp(cell_lengths, 1e-8)).amax(dim=0)
+        cutoff_t = torch.as_tensor(cutoff, dtype=dtype, device=device)
+        eps = 1e-8
 
-        # estimate from coordinate extents
-        extents = (
-            batch_cells_tensor.max(dim=1).values
-            - batch_cells_tensor.min(dim=1).values
-        )
-        n_from_extents = torch.ceil(cutoff / torch.clamp(extents, 1e-8)).amax(dim=0)
+        # ------------------------------------------------------------------
+        # 1) matscipy-style face distances len1, len2, len3
+        #    len_alpha = volume / ||n_alpha||,  n_alpha = a_beta x a_gamma
+        # ------------------------------------------------------------------
+        a1 = batch_cells_tensor[:, 0, :]  # (B, 3)
+        a2 = batch_cells_tensor[:, 1, :]
+        a3 = batch_cells_tensor[:, 2, :]
 
-        # take the larger
-        max_n = torch.maximum(n_from_lengths, n_from_extents).to(self.int_dtype)
+        n1 = torch.cross(a2, a3, dim=-1)  # (B, 3)
+        n2 = torch.cross(a3, a1, dim=-1)
+        n3 = torch.cross(a1, a2, dim=-1)
 
-        mesh = torch.meshgrid(
-            torch.arange(-max_n[0], max_n[0] + 1, dtype=self.int_dtype,
-                        device=batch_cells_tensor.device),
-            torch.arange(-max_n[1], max_n[1] + 1, dtype=self.int_dtype,
-                        device=batch_cells_tensor.device),
-            torch.arange(-max_n[2], max_n[2] + 1, dtype=self.int_dtype,
-                        device=batch_cells_tensor.device),
-            indexing='ij'
-        )
+        # volume = a1 · (a2 × a3)
+        volume = torch.abs(torch.sum(a1 * n1, dim=-1))  # (B,)
 
-        mesh = torch.stack(mesh, dim=-1).reshape(-1, 3)
+        L1 = volume / torch.clamp(torch.linalg.norm(n1, dim=-1), min=eps)
+        L2 = volume / torch.clamp(torch.linalg.norm(n2, dim=-1), min=eps)
+        L3 = volume / torch.clamp(torch.linalg.norm(n3, dim=-1), min=eps)
+
+        # ------------------------------------------------------------------
+        # 2) matscipy bins: n_alpha = max(floor(len_alpha / cutoff), 1)
+        # ------------------------------------------------------------------
+        n1_bins = torch.floor(L1 / cutoff_t)
+        n2_bins = torch.floor(L2 / cutoff_t)
+        n3_bins = torch.floor(L3 / cutoff_t)
+
+        ones = torch.ones_like(n1_bins)
+        n1_bins = torch.maximum(n1_bins, ones)
+        n2_bins = torch.maximum(n2_bins, ones)
+        n3_bins = torch.maximum(n3_bins, ones)
+
+        # ------------------------------------------------------------------
+        # 3) matscipy neighbor-cell reach:
+        #    nx = ceil(cutoff * n1 / len1), etc.
+        # ------------------------------------------------------------------
+        nx = torch.ceil(cutoff_t * n1_bins / torch.clamp(L1, min=eps))
+        ny = torch.ceil(cutoff_t * n2_bins / torch.clamp(L2, min=eps))
+        nz = torch.ceil(cutoff_t * n3_bins / torch.clamp(L3, min=eps))
+
+        # Global |S_alpha| extents: use max over batch of nx,ny,nz
+        S_abs_max = torch.stack(
+            [nx.max(), ny.max(), nz.max()], dim=0
+        ).to(self.int_dtype)  # (3,)
+
+        # ------------------------------------------------------------------
+        # 4) Build integer shift grid S and Cartesian images S · h
+        # ------------------------------------------------------------------
+        sx = torch.arange(-S_abs_max[0], S_abs_max[0] + 1,
+                          dtype=self.int_dtype, device=device)
+        sy = torch.arange(-S_abs_max[1], S_abs_max[1] + 1,
+                          dtype=self.int_dtype, device=device)
+        sz = torch.arange(-S_abs_max[2], S_abs_max[2] + 1,
+                          dtype=self.int_dtype, device=device)
+
+        mesh = torch.meshgrid(sx, sy, sz, indexing="ij")
+        mesh = torch.stack(mesh, dim=-1).reshape(-1, 3)  # (L, 3) integer S
 
         batch_cartesian_lattice_shifts_tensor = torch.einsum(
-            "li,bij->blj", mesh.to(batch_cells_tensor.dtype), batch_cells_tensor
-        )
-        return mesh, batch_cartesian_lattice_shifts_tensor
+            "li,bij->blj",
+            mesh.to(dtype),
+            batch_cells_tensor,
+        )  # (B, L, 3)
+
+        config_lattice_shift_extents = S_abs_max.unsqueeze(0).expand(B, 3)
+
+        return mesh, batch_cartesian_lattice_shifts_tensor #, config_lattice_shift_extents
 
     def _nlist_ON2(
         self,
