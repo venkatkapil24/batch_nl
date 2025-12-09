@@ -64,7 +64,7 @@ class NeighbourList:
 
         self.cutoff = cutoff
 
-        self.float_dtype = torch.float32
+        self.float_dtype = torch.float64
         self.int_dtype = torch.int64
 
         # device
