@@ -221,15 +221,3 @@ pytest
 Tests verify agreement with `matscipy` across a range of crystal
 structures and cell geometries (cubic, tetragonal, orthorhombic, hcp,
 rhombohedral, triclinic, oblique, etc.).
-
----
-
-## License
-
-The `pynl` project is licensed under the Academic Software License v1.0 (ASL).
-See the `LICENSE` file for details.
-
-`pynl` is © 2024, Venkat Kapil. Distributed under the ASL v1.0 without
-any warranty; see the license for details.
-
-Contact: venkat.kapil@gmail.com
