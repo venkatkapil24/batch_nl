@@ -112,5 +112,5 @@ STRUCTURE_FACTORIES = [
 @pytest.mark.parametrize("use_torch_compile", [False, True])
 def test_on2_matches_matscipy_for_various_cells(make_atoms, use_torch_compile):
     atoms = make_atoms()
-    check_nl(atoms, radius=3.0, use_torch_compile=use_torch_compile)
+    check_nl(atoms, cutoff=3.0, use_torch_compile=use_torch_compile)
 

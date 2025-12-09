@@ -1,321 +1,470 @@
 import torch
+from torch.nn.utils.rnn import pad_sequence
+
 import warnings
 
 class NeighbourList:
     """
     Batched neighbour-list builder using PyTorch.
 
-    Given a list of periodic configurations, this class builds neighbour
-    lists for all structures using a common cutoff radius. Configurations 
-    are grouped into fixed-size batches and padded, so the heavy work
-    can be done with vectorised tensor operations on a chosen device.
+    This class constructs neighbour lists for a set of periodic atomic
+    configurations using a common cutoff radius. All configurations are
+    treated as a single batch: they are padded to a common shape and
+    processed together on the specified device, enabling fully vectorised
+    neighbour-list construction across the batch.
     """
 
-    def __init__(self,
-             list_of_configurations: list,
-             radius: float,
-             batch_size: int,
-             device: str | torch.device | None = None):
+    def __init__(
+        self,
+        list_of_positions: list,
+        list_of_cells,
+        cutoff: float,
+        device: str | torch.device | None = None,
+    ):
         """
+        Initialize a batched neighbour-list calculator.
+
         Parameters
         ----------
-        list_of_configurations : list of Atoms
-            List of ASE-like Atoms objects with `.positions` and `.cell`.
-
-        radius : float
-            Cutoff radius.
-
-        batch_size : int
-            Number of configurations processed together per batch.
-
-        device : str or torch.device
-            Compute device ("cpu", "cuda", or torch.device(...)).
+        list_of_positions : list of array-like
+            List of length n_configs; each entry is an (n_i, 3) array with
+            Cartesian positions for configuration i.
+        list_of_cells : list of array-like
+            List of length n_configs; each entry is a (3, 3) cell matrix
+            corresponding to configuration i.
+        cutoff : float
+            Cutoff radius used for neighbour detection. Must be positive.
+        device : str or torch.device, optional
+            Device on which all batched tensors will be allocated
+            ("cpu", "cuda", or torch.device(...)). If None, CUDA is used
+            when available, otherwise CPU.
         """
 
-        self.list_of_configurations = list_of_configurations
-        self.num_configs = len(self.list_of_configurations)
-
-        # checks radius
-        if isinstance(radius, int):
-            warnings.warn("Converting radius from int to float.", stacklevel=2)
-        try:
-            radius = float(radius)
-        except Exception:
-            raise TypeError(f"radius must be convertible to float, got {radius!r}.")
-        
-        if radius <= 0.0:
-            raise ValueError(f"radius must be positive, got {radius}.")
-
-        self.radius = radius
-
-        # checks batch_size 
-        
-        if not isinstance(batch_size, int) or batch_size <= 0:
-            raise ValueError(f"batch_size must be a positive int, got {batch_size}")
-
-        if batch_size > self.num_configs:
+        if len(list_of_positions) != len(list_of_cells):
             raise ValueError(
-                "batch_size must be smaller than or equal to the total number of configurations."
+                "length of position and cell lists should be the same, "
+                f"got len(pos_list) = {len(list_of_positions)} and "
+                f"len(cell_list) = {len(list_of_cells)}"
             )
 
-        self.batch_size = batch_size
-        self.num_batches = (self.num_configs + self.batch_size - 1) // self.batch_size
+        self.positions_list = list_of_positions
+        self.cell_list = list_of_cells
+        self.num_configs = len(self.positions_list)
 
-        self.float_dtype = torch.float32
+        # cutoff
+        if isinstance(cutoff, int):
+            warnings.warn("Converting cutoff from int to float.", stacklevel=2)
+        try:
+            cutoff = float(cutoff)
+        except Exception:
+            raise TypeError(f"cutoff must be convertible to float, got {cutoff!r}.")
+
+        if cutoff <= 0.0:
+            raise ValueError(f"cutoff must be positive, got {cutoff}.")
+
+        self.cutoff = cutoff
+
+        self.float_dtype = torch.float64
         self.int_dtype = torch.int64
 
-        # checks device
-
+        # device
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        elif not isinstance(device,  (str, torch.device)):
-            raise TypeError(f"device should be a string or torch.device, got {type(device).__name__}.")
+        elif not isinstance(device, (str, torch.device)):
+            raise TypeError(
+                "device should be a string or torch.device, "
+                f"got {type(device).__name__}."
+            )
         else:
             self.device = torch.device(device)
 
-        # an internal tolerance for check self images after wrapping
-        self.tolerance = 1e-6
+        # internal tolerance to filter self / near-self images
+        self._tolerance = 1e-6
 
-        # compoled neighbourlist function
+        # compiled neighbour-list function
         self._nlist_ON2_compiled = torch.compile(self._nlist_ON2)
 
     def load_data(self):
-       """
-        Convert the input configurations to tensor form and prepare batches.
+        """
+        Convert input positions and cells into padded batched tensors.
 
-        This method:
-        - converts each configuration's cell and positions to PyTorch tensors
-          with the class float dtype, and stores them in `cell_list` and
-          `positions_list`;
-        - calls `_batch_and_mask_positions_and_cells` to build the padded
-          batched tensors and masks used internally by the neighbour-list
-          routines.
+        This populates `batch_positions_tensor`, `batch_mask_tensor`,
+        and `batch_cell_tensor`, and moves them to `self.device`.
 
         Must be called before `calculate_neighbourlist`.
+
+        After this call:
+        ----------------
+        batch_positions_tensor : torch.Tensor
+            (n_configs, n_max, 3) padded atomic positions.
+        batch_mask_tensor : torch.Tensor
+            (n_configs, n_max) boolean mask (True for valid atoms).
+        batch_cell_tensor : torch.Tensor
+            (n_configs, 3, 3) cell matrices.
         """
-       
-       self.cell_list = [torch.tensor(atoms.cell.array, dtype=self.float_dtype) for atoms in self.list_of_configurations]
-       self.positions_list = [torch.tensor(atoms.positions, dtype=self.float_dtype) for atoms in self.list_of_configurations]
-       
-       self._batch_and_mask_positions_and_cells()
 
-    def _batch_and_mask_positions_and_cells(self):
+        # padded positions with NaN as padding
+        self.batch_positions_tensor = pad_sequence(
+            [
+                torch.tensor(t, dtype=self.float_dtype)     # (n_i, 3)
+                for t in self.positions_list
+            ],
+            batch_first=True,
+            padding_value=float("nan"),
+        )                                                   # (n_configs, n_max, 3)
+
+        # mask: True where at least one coordinate is non-NaN
+        self.batch_mask_tensor = (
+            self.batch_positions_tensor == self.batch_positions_tensor
+        ).any(dim=-1)                                       # (n_configs, n_max)
+
+        # replace NaN with zeros
+        self.batch_positions_tensor = torch.nan_to_num(
+            self.batch_positions_tensor,
+            nan=0.0,
+        )                                                   # (n_configs, n_max, 3)
+
+        # cells
+        self.batch_cell_tensor = torch.tensor(
+            self.cell_list,
+            dtype=self.float_dtype,
+        )                                                   # (n_configs, 3, 3)
+
+        # move everything to target device
+        self.batch_positions_tensor = self.batch_positions_tensor.to(self.device)
+        self.batch_cell_tensor      = self.batch_cell_tensor.to(self.device)
+        self.batch_mask_tensor      = self.batch_mask_tensor.to(self.device)
+
+
+    def calculate_neighbourlist(self, use_torch_compile: bool = True):
         """
-        Build padded batched tensors for positions and cells, plus a mask.
-
-        For each batch of configurations, this method constructs:
-        - `batch_positions_tensor` with shape (batch_size, n_max, 3), where
-          `n_max` is the maximum number of atoms in any configuration in that
-          batch; entries beyond the true atom count are zero-padded.
-        - `batch_cells_tensor` with shape (batch_size, 3, 3), containing one
-          cell matrix per configuration in the batch.
-        - `batch_masks_tensor` with shape (batch_size, n_max), where entries
-          are True for valid atoms and False for padding.
-
-        The tensors for all batches are stored in the lists:
-        `batch_positions_tensor_list`, `batch_cells_tensor_list`,
-        and `batch_masks_tensor_list`.
+        Compute the batched neighbour list for all configurations.
 
         Notes
         -----
-        This is an internal helper and assumes that `positions_list` and
-        `cell_list` have already been populated by `load_data`.
-        """
-
-        self.batch_positions_tensor_list = []
-        self.batch_cells_tensor_list = []
-        self.batch_masks_tensor_list = []
-
-        for batch_id in range(self.num_batches):
-
-            structure_id_min = batch_id * self.batch_size
-            structure_id_max = min((batch_id + 1) * self.batch_size, self.num_configs)
-
-            position_size_max = max(len(p) for p in self.positions_list[structure_id_min : structure_id_max])
-
-            batch_positions_tensor = torch.zeros(self.batch_size, position_size_max, 3, dtype=self.float_dtype)
-            batch_cells_tensor = torch.eye(3, dtype=self.float_dtype).unsqueeze(0).repeat(self.batch_size, 1, 1)
-            batch_masks_tensor = torch.zeros(self.batch_size, position_size_max, dtype=torch.bool)
-            del position_size_max
-
-            for batch_structure_id in range(structure_id_max - structure_id_min):
-
-                pos = self.positions_list[batch_structure_id + structure_id_min]
-                cell = self.cell_list[batch_structure_id + structure_id_min]
-                batch_positions_tensor[batch_structure_id, 0 : len(pos)] = pos
-                batch_cells_tensor[batch_structure_id] = cell
-                batch_masks_tensor[batch_structure_id, 0 : len(pos)] = 1
-
-            self.batch_positions_tensor_list.append(batch_positions_tensor)
-            self.batch_cells_tensor_list.append(batch_cells_tensor)
-            self.batch_masks_tensor_list.append(batch_masks_tensor)
-
-    def calculate_neighbourlist(self, use_torch_compile=True):
-        """
-        Compute neighbour lists for all configurations in all batches.
+        `load_data()` must be called before invoking this method.
 
         Parameters
         ----------
         use_torch_compile : bool, optional
-            If True (default), use the `torch.compile`-optimised O(N^2)
-            backend; if False, use the uncompiled reference implementation.
+            If True, use the torch.compile-optimised backend; otherwise use
+            the plain PyTorch implementation.
 
         Returns
         -------
-        list of list
-            Outer list has length `num_batches`. Each element corresponds to
-            one batch and is itself a list of length `batch_size`, where each
-            entry is `[atom_idx, neighbour_idx, S, d]` for a single
-            configuration:
-                atom_idx : 1D LongTensor
-                    Indices of central atoms.
-                neighbour_idx : 1D LongTensor
-                    Indices of neighbour atoms.
-                S : LongTensor of shape (n_pairs, 3)
-                    Integer lattice shift vectors for each pair.
-                d : 1D Tensor
-                    Distances corresponding to each pair.
-
-        Notes
-        -----
-        Assumes `load_data()` has been called so that the batched position,
-        cell and mask tensors are available in
-        `batch_positions_tensor_list`, `batch_cells_tensor_list`, and
-        `batch_masks_tensor_list`.
+        r_edges : torch.Tensor
+            Tensor of shape (2, n_edges) with flattened source and neighbour
+            atom indices in the global (batched) indexing.
+        r_integer_lattice_shifts : torch.Tensor
+            Tensor of shape (n_edges, 3) with integer lattice shift vectors.
+        r_cartesian_lattice_shifts : torch.Tensor
+            Tensor of shape (n_edges, 3) with Cartesian lattice shift vectors.
+        r_distances : torch.Tensor
+            Tensor of shape (n_edges,) with interatomic distances.
         """
-
-        r = []
 
         if use_torch_compile:
             neighbourlist_fn = self._nlist_ON2_compiled
         else:
             neighbourlist_fn = self._nlist_ON2
 
-        for batch_id in range(self.num_batches):
+        # compute full batched neighbour data
+        (
+            distance_matrix,                       # (n_configs, n_lattice_shifts, n_max, n_max)
+            criterion,                             # (n_configs, n_lattice_shifts, n_max, n_max)
+            batch_lattice_shifts_tensor,           # (n_lattice_shifts, 3)
+            batch_cartesian_lattice_shifts_tensor, # (n_configs, n_lattice_shifts, 3)
+        ) = neighbourlist_fn(
+            self.batch_positions_tensor,           # (n_configs, n_max, 3)
+            self.batch_cell_tensor,                # (n_configs, 3, 3)
+            self.batch_mask_tensor,                # (n_configs, n_max)
+            self.cutoff,
+            self._tolerance,
+        )
 
-            batch_positions_tensor = self.batch_positions_tensor_list[batch_id].to(self.device)
-            batch_cells_tensor = self.batch_cells_tensor_list[batch_id].to(self.device)
-            batch_mask_tensor = self.batch_masks_tensor_list[batch_id].to(self.device)
-            batch_lattice_shifts_tensor, batch_cartesian_lattice_shifts_tensor = self._calculate_batch_lattice_shifts(batch_cells_tensor,)
+        # indices of all neighbour pairs
+        config_idx, lattice_shift_idx, atom_idx, neighbour_idx = torch.nonzero(
+            criterion,
+            as_tuple=True,
+        )                                          # each (n_edges,)
 
-            distance_matrix, criterion = neighbourlist_fn(batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, batch_cartesian_lattice_shifts_tensor, self.radius, self.tolerance)
+        # global atom indices via per-config offsets
+        lengths = self.batch_mask_tensor.sum(dim=-1, dtype=self.int_dtype)  # (n_configs,)
+        offsets = torch.cumsum(lengths, dim=0) - lengths                    # (n_configs,)
 
-            b_r = []
+        r_edges = torch.stack(
+            [
+                atom_idx      + offsets[config_idx],    # (n_edges,)
+                neighbour_idx + offsets[config_idx],    # (n_edges,)
+            ],
+            dim=0,
+        )                                               # (2, n_edges)
 
-            for i in range(self.batch_size):
-              
-                lattice_shift_idx, atom_idx, neighbour_idx = torch.nonzero(criterion[i], as_tuple=True)
+        r_integer_lattice_shifts = batch_lattice_shifts_tensor[lattice_shift_idx]          # (n_edges, 3)
+        r_cartesian_lattice_shifts = batch_cartesian_lattice_shifts_tensor[
+            config_idx,
+            lattice_shift_idx,
+        ]                                                                                  # (n_edges, 3)
 
-                S = batch_lattice_shifts_tensor[lattice_shift_idx]
+        r_distances = distance_matrix[
+            config_idx,
+            lattice_shift_idx,
+            atom_idx,
+            neighbour_idx,
+        ]                                                                                  # (n_edges,)
 
-                D = batch_positions_tensor[i, neighbour_idx] - batch_positions_tensor[i, atom_idx] + batch_cartesian_lattice_shifts_tensor[i, lattice_shift_idx]
+        return (
+            r_edges,
+            r_integer_lattice_shifts,
+            r_cartesian_lattice_shifts,
+            r_distances,
+        )
 
-                d = distance_matrix[i, lattice_shift_idx, atom_idx, neighbour_idx]
 
-                b_r.append([atom_idx, neighbour_idx, S, D, d])
-
-            r.append(b_r)
-
-        return r
-    
-    def _calculate_batch_lattice_shifts(self, batch_cells_tensor):
+    def _calculate_batch_lattice_shifts(self, batch_cells_tensor, cutoff):
         """
-        Compute a common set of lattice shift vectors for a batch of cells.
-
-        For a given cutoff radius and a batch of 3×3 cell matrices, this
-        estimates how many periodic images along each lattice direction must
-        be considered so that all neighbours within `self.radius` are captured
-        for every cell in the batch. A single, conservative set of shifts is
-        returned and reused for the whole batch.
+        Compute Matscipy-style lattice shift vectors based on cell geometry.
 
         Parameters
         ----------
-        batch_cells_tensor : torch.Tensor, shape (n_cells, 3, 3)
-            Cell matrices for the configurations in the current batch.
+        batch_cells_tensor : torch.Tensor
+            Tensor of shape (n_configs, 3, 3) with cell matrices
+            (rows = lattice vectors for each configuration).
+        cutoff : float
+            Cutoff radius.
 
         Returns
         -------
-        shifts : torch.Tensor, shape (n_shifts, 3)
-            Integer lattice shift vectors (in lattice coordinates) that
-            should be applied when building neighbour lists.
+        batch_lattice_shifts_tensor : torch.Tensor
+            Tensor of shape (n_lattice_shifts, 3) containing all integer
+            lattice shift vectors S = (s_x, s_y, s_z) needed to cover the
+            cutoff for every configuration in the batch.
         """
 
-        # estimate from cell-vector norms
-        cell_lengths = torch.linalg.norm(batch_cells_tensor, dim=-1)
-        n_from_lengths = torch.ceil(self.radius / torch.clamp(cell_lengths, 1e-8)).amax(dim=0)
+        # normal to the lattice vectors
+        N = torch.cross(
+            batch_cells_tensor[:, [1, 2, 0], :],      # (n_configs, 3, 3)
+            batch_cells_tensor[:, [2, 0, 1], :],      # (n_configs, 3, 3)
+            dim=-1,
+        )                                             # (n_configs, n_lattice, n_cartesian)
 
-        # estimate from coordinate extents
-        extents = (
-            batch_cells_tensor.max(dim=1).values
-            - batch_cells_tensor.min(dim=1).values
-        )
-        n_from_extents = torch.ceil(self.radius / torch.clamp(extents, 1e-8)).amax(dim=0)
+        # face-to-face distances of the parallelepiped
+        L = (
+            torch.linalg.det(batch_cells_tensor).abs().unsqueeze(-1)    # (n_configs,) -> (n_configs, 1)
+            / torch.linalg.norm(N, dim=-1)                              # (n_configs, n_lattice)
+        )                                                               # (n_configs, n_lattice)
 
-        # take the larger
-        max_n = torch.maximum(n_from_lengths, n_from_extents).to(self.int_dtype)
+        # matscipy-style binning
+        n_bins = torch.clamp(
+            torch.floor(L / cutoff),                                    # (n_configs, n_lattice)
+            min=1,
+        )                                                               # (n_configs, n_lattice)
 
-        mesh = torch.meshgrid(
-            torch.arange(-max_n[0], max_n[0] + 1, dtype=self.int_dtype, device=batch_cells_tensor.device),
-            torch.arange(-max_n[1], max_n[1] + 1, dtype=self.int_dtype, device=batch_cells_tensor.device),
-            torch.arange(-max_n[2], max_n[2] + 1, dtype=self.int_dtype, device=batch_cells_tensor.device),
-            indexing='ij'
-        )
+        # max lattice reach across configurations
+        S_max = torch.max(
+            torch.ceil(cutoff * n_bins / L),                            # (n_configs, n_lattice)
+            dim=0,
+        ).values.long()                                                 # (n_lattice,)
 
-        mesh = torch.stack(mesh, dim=-1).reshape(-1, 3)
+        # integer lattice shifts
+        batch_lattice_shifts_tensor = torch.cartesian_prod(
+            torch.arange(-S_max[0], S_max[0] + 1,
+                         device=S_max.device, dtype=S_max.dtype),       # (2*S_max[0]+1,)
+            torch.arange(-S_max[1], S_max[1] + 1,
+                         device=S_max.device, dtype=S_max.dtype),       # (2*S_max[1]+1,)
+            torch.arange(-S_max[2], S_max[2] + 1,
+                         device=S_max.device, dtype=S_max.dtype),       # (2*S_max[2]+1,)
+        )                                                               # (n_lattice_shifts, 3)
 
-        batch_cartesian_lattice_shifts_tensor = torch.einsum("li,bij->blj", mesh.to(batch_cells_tensor.dtype), batch_cells_tensor)
-        return mesh, batch_cartesian_lattice_shifts_tensor
+        return batch_lattice_shifts_tensor
 
-    def _nlist_ON2(self, batch_positions_tensor, batch_cells_tensor, batch_mask_tensor, batch_cartesian_lattice_shifts_tensor, radius, tolerance):
+    def _nlist_ON2(
+        self,
+        batch_positions_tensor,
+        batch_cells_tensor,
+        batch_mask_tensor,
+        cutoff,
+        tolerance,
+    ):
         """
-        O(N²) neighbour-list backend operating on a batched distance matrix.
+        Full O(N^2) neighbour-list backend for a single batch.
 
         Parameters
         ----------
-        batch_positions_tensor : torch.Tensor, shape (B, N, 3)
-            Cartesian positions for a batch of configurations, padded to the
-            maximum number of atoms `N` in the batch.
-        batch_cells_tensor : torch.Tensor, shape (B, 3, 3)
-            Cell matrices for each configuration in the batch.
-        batch_mask_tensor : torch.Tensor, shape (B, N)
-            Boolean mask indicating which entries in `batch_positions_tensor`
-            correspond to real atoms (True) versus padding (False).
-        lattice_shifts : torch.Tensor, shape (L, 3)
-            Integer lattice shift vectors to apply (in lattice coordinates).
-        radius : float
-            Cutoff radius; pairs with distance < `radius` are kept.
+        batch_positions_tensor : torch.Tensor
+            Tensor of shape (n_configs, n_max, 3) with batched atomic positions.
+        batch_cells_tensor : torch.Tensor
+            Tensor of shape (n_configs, 3, 3) with batched cell matrices
+            (rows = lattice vectors).
+        batch_mask_tensor : torch.Tensor
+            Boolean tensor of shape (n_configs, n_max) marking valid atoms.
+        cutoff : float
+            Cutoff radius for neighbour detection.
         tolerance : float
-            Lower distance bound used to filter out self-pairs and very
-            close numerical artefacts; pairs with distance < `tolerance`
-            are discarded.
+            Lower distance bound used to exclude self/near-self images.
 
         Returns
         -------
-        distance_matrix : torch.Tensor, shape (B, L, N, N)
-            Pairwise distances between atoms and their periodic images for
-            each batch (B), lattice shift (L) and atom pair (N × N).
-        criterion : torch.Tensor, shape (B, L, N, N)
-            Boolean mask indicating which pairs satisfy the cutoff and masking
-            criteria, i.e. within `[tolerance, radius)` and both atoms valid
-            according to `batch_mask_tensor`.
+        distance_matrix : torch.Tensor
+            Tensor of shape (n_configs, n_lattice_shifts, n_max, n_max)
+            with pairwise distances for all lattice shifts.
+        criterion : torch.Tensor
+            Boolean tensor of shape (n_configs, n_lattice_shifts, n_max, n_max)
+            marking neighbour pairs within the cutoff (and >= tolerance).
+        batch_lattice_shifts_tensor : torch.Tensor
+            Tensor of shape (n_lattice_shifts, 3) with integer lattice shift
+            vectors S = (s_x, s_y, s_z).
+        batch_cartesian_lattice_shifts_tensor : torch.Tensor
+            Tensor of shape (n_configs, n_lattice_shifts, 3) with Cartesian
+            lattice shift vectors S · h.
         """
 
-        # (b, lc, 1, 3) + (b, 1, n, 3) -> b, lc, n, 3
-        batch_shifted_positions_tensor = batch_cartesian_lattice_shifts_tensor.unsqueeze(-2) + batch_positions_tensor.unsqueeze(1)
+        # integer lattice shifts
+        batch_lattice_shifts_tensor = self._calculate_batch_lattice_shifts(
+            batch_cells_tensor,                # (n_configs, 3, 3)
+            cutoff=cutoff,
+        )                                      # (n_lattice_shifts, 3)
 
-        # b, 1, 1, n, 3 - b, lc, n, 1, 3 ->  b, lc, n, n
-        distance_matrix = torch.sqrt(((batch_positions_tensor.unsqueeze(1).unsqueeze(3) - batch_shifted_positions_tensor.unsqueeze(2))**2).sum(dim=-1))
+        # same shifts in Cartesian coordinates
+        batch_cartesian_lattice_shifts_tensor = torch.matmul(
+            batch_lattice_shifts_tensor.to(batch_cells_tensor.dtype),  # (n_lattice_shifts, 3)
+            batch_cells_tensor,                                        # (n_configs, 3, 3)
+        )                                                              # (n_configs, n_lattice_shifts, 3)
 
-        distance_matrix_criterion = (distance_matrix < radius) & (distance_matrix >= tolerance)
+        # shifted positions for each lattice shift
+        batch_shifted_positions_tensor = (
+            batch_cartesian_lattice_shifts_tensor.unsqueeze(-2)        # (n_configs, n_lattice_shifts, 1, 3)
+            + batch_positions_tensor.unsqueeze(1)                      # (n_configs, 1, n_max, 3)
+        )                                                              # (n_configs, n_lattice_shifts, n_max, 3)
 
-        # get the appropriate mask for atom pair connectivity
-        default_mask = batch_mask_tensor.unsqueeze(-2) & batch_mask_tensor.unsqueeze(-1)
-        
-        # adds dim for lattice_shifts
-        default_mask = default_mask.unsqueeze(1)
+        # pairwise differences
+        diff = (
+            batch_positions_tensor.unsqueeze(1).unsqueeze(3)           # (n_configs, 1, 1, n_max, 3)
+            - batch_shifted_positions_tensor.unsqueeze(2)              # (n_configs, n_lattice_shifts, n_max, 1, 3)
+        )                                                              # (n_configs, n_lattice_shifts, n_max, n_max, 3)
 
-        criterion = torch.logical_and(distance_matrix_criterion, default_mask)
+        # pairwise distances
+        distance_matrix = torch.sqrt((diff ** 2).sum(dim=-1))          # (n_configs, n_lattice_shifts, n_max, n_max)
 
-        return distance_matrix, criterion
-    
+        # neighbour criterion based on cutoff / tolerance
+        distance_matrix_criterion = (
+            (distance_matrix < cutoff) &                               # (n_configs, n_lattice_shifts, n_max, n_max)
+            (distance_matrix >= tolerance)
+        )                                                              # (n_configs, n_lattice_shifts, n_max, n_max)
+
+        # atom-pair mask from validity mask
+        default_mask = (
+            batch_mask_tensor.unsqueeze(-2)                            # (n_configs, n_max, 1)
+            & batch_mask_tensor.unsqueeze(-1)                          # (n_configs, 1, n_max)
+        )                                                              # (n_configs, n_max, n_max)
+        default_mask = default_mask.unsqueeze(1)                       # (n_configs, 1, n_max, n_max)
+
+        # final neighbour criterion
+        criterion = distance_matrix_criterion & default_mask           # (n_configs, n_lattice_shifts, n_max, n_max)
+
+        return (
+            distance_matrix,                       # (n_configs, n_lattice_shifts, n_max, n_max)
+            criterion,                             # (n_configs, n_lattice_shifts, n_max, n_max)
+            batch_lattice_shifts_tensor,           # (n_lattice_shifts, 3)
+            batch_cartesian_lattice_shifts_tensor  # (n_configs, n_lattice_shifts, 3)
+        )
+
+    def get_matscipy_output_from_batch_output(
+        self,
+        r_edges: torch.Tensor,                    # (2, n_edges) 
+        r_integer_lattice_shifts: torch.Tensor,   # (n_edges, 3)
+        r_cartesian_lattice_shifts: torch.Tensor, # (n_edges, 3)
+        r_distances: torch.Tensor,                # (n_edges,)
+        device: str | torch.device | None = None,
+    ):
+        """
+        Convert flattened batched neighbour-list output to per-configuration
+        matscipy-style lists.
+
+        Parameters
+        ----------
+        r_edges : torch.Tensor
+            Tensor of shape (2, n_edges) with flattened source and neighbour
+            atom indices in the global (batched) indexing.
+        r_integer_lattice_shifts : torch.Tensor
+            Tensor of shape (n_edges, 3) with integer lattice shift vectors.
+        r_cartesian_lattice_shifts : torch.Tensor
+            Tensor of shape (n_edges, 3) with Cartesian lattice shift vectors.
+        r_distances : torch.Tensor
+            Tensor of shape (n_edges,) with interatomic distances.
+        device : str or torch.device or None, optional
+            If "cpu" / torch.device("cpu"), outputs are moved to CPU.
+            If None, outputs stay on the input device.
+
+        Returns
+        -------
+        atom_index_list : list[torch.Tensor]
+            List of length n_configs; each entry is a (n_edges_cfg,) tensor
+            of source atom indices (local to that configuration).
+        neighbor_index_list : list[torch.Tensor]
+            List of length n_configs; each entry is a (n_edges_cfg,) tensor
+            of neighbour atom indices (local to that configuration).
+        int_shift_list : list[torch.Tensor]
+            List of length n_configs; each entry is a (n_edges_cfg, 3) tensor
+            of integer lattice shifts.
+        cart_shift_list : list[torch.Tensor]
+            List of length n_configs; each entry is a (n_edges_cfg, 3) tensor
+            of Cartesian lattice shifts.
+        distance_list : list[torch.Tensor]
+            List of length n_configs; each entry is a (n_edges_cfg,) tensor
+            of interatomic distances.
+        """
+
+        if device is None:
+            target_device = r_edges.device
+        elif not isinstance(device, (str, torch.device)):
+            raise TypeError(
+                f"device should be a string or torch.device, got {type(device).__name__}."
+            )
+        else:
+            target_device = torch.device(device)
+
+        move_to_cpu = (target_device.type == "cpu")
+
+        lengths = self.batch_mask_tensor.sum(dim=-1, dtype=torch.long)  # (n_configs,)
+        offsets = torch.cumsum(lengths, dim=0) - lengths                # (n_configs,)
+        n_configs = lengths.size(0)
+
+        atom_index_list = []
+        neighbor_index_list = []
+        int_shift_list = []
+        cart_shift_list = []
+        distance_list = []
+
+        for cfg in range(n_configs):
+            start = offsets[cfg]
+            stop = start + lengths[cfg]
+
+            mask = (r_edges[0] >= start) & (r_edges[0] < stop)          # (n_edges,)
+
+            i_global = r_edges[0, mask]                                 # (n_edges_cfg,)
+            j_global = r_edges[1, mask]                                 # (n_edges_cfg,)
+            i_local = i_global - start
+            j_local = j_global - start
+
+            if move_to_cpu:
+                atom_index_list.append(i_local.to("cpu"))
+                neighbor_index_list.append(j_local.to("cpu"))
+                int_shift_list.append(r_integer_lattice_shifts[mask].to("cpu"))
+                cart_shift_list.append(r_cartesian_lattice_shifts[mask].to("cpu"))
+                distance_list.append(r_distances[mask].to("cpu"))
+            else:
+                atom_index_list.append(i_local)
+                neighbor_index_list.append(j_local)
+                int_shift_list.append(r_integer_lattice_shifts[mask])
+                cart_shift_list.append(r_cartesian_lattice_shifts[mask])
+                distance_list.append(r_distances[mask])
+
+        return (
+            atom_index_list,
+            neighbor_index_list,
+            int_shift_list,
+            cart_shift_list,
+            distance_list,
+        )
+
