@@ -6,11 +6,12 @@ The package is in an early stage, so contributions and suggestions for improving
 
 # Performance benchmarks on RTX 6000
 
-Here is a test for batches of structures containing 128 atoms. For the full benchmark against currently available neighbour lists, see
+A test for batches of structures containing 128 atoms.
+![Benchmark timings for batch_nl on RTX 6000](examples/benchmark_NVIDIA_RTX_A6000.png)
+
+For the full benchmark against currently available neighbour lists, see
 
 [examples/benchmark_multiple_structure.ipynb](examples/benchmark_multiple_structure.ipynb).
-
-![Benchmark timings for batch_nl on RTX 6000](examples/benchmark_NVIDIA_RTX_A6000.png)
 
 ---
 
