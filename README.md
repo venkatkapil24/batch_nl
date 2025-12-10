@@ -1,10 +1,8 @@
 # batch_nl — Batched neighbour-list builder in PyTorch
 
-`batch_nl` provides fully vectorised, GPU‑accelerated batched neighbour‑list construction
-for periodic atomistic systems using PyTorch.
+`batch_nl` provides fully vectorised, GPU-accelerated batched neighbour-list construction for periodic atomistic systems using PyTorch. All configurations are processed together in a single tensor batch, to enable fast neighbour search and seamless integration with MLIPs and other batched workflows. 
 
-All configurations are processed together in a single tensor batch, enabling high‑throughput
-NL computation and seamless integration with MLIP workflows.
+The package is in an early stage, so contributions and suggestions for improving API coverage are very welcome.
 
 ---
 
@@ -43,8 +41,13 @@ configs = [
     base * (4, 4, 4),   # config 2
 ]
 
-list_of_positions = [atoms.positions for atoms in configs]
-list_of_cells     = [atoms.cell.array for atoms in configs]
+list_of_positions = [
+    atoms.positions for atoms in configs\
+        ]
+
+list_of_cells     = [
+    atoms.cell.array for atoms in configs
+    ]
 
 nl = NeighbourList(
     list_of_positions=list_of_positions,
@@ -55,19 +58,22 @@ nl = NeighbourList(
 
 nl.load_data()
 
-r_edges, r_S_int, r_S_cart, r_d = nl.calculate_neighbourlist(
+output = nl.calculate_neighbourlist(
     use_torch_compile=True
 )
 
+# Output with global batch indices
+r_edges, r_S_int, r_S_cart, r_d = output 
+
+
+# Or the familiar matscipy-style output
 (
     atom_index_list,
     neighbor_index_list,
     int_shift_list,
     cart_shift_list,
     distance_list,
-) = nl.get_matscipy_output_from_batch_output(
-    r_edges, r_S_int, r_S_cart, r_d
-)
+) = nl.get_matscipy_output_from_batch_output(*output)
 
 for cfg in range(len(configs)):
     print(f"Configuration {cfg}: {len(atom_index_list[cfg])} neighbour pairs")
@@ -98,8 +104,9 @@ Thus a pair like:
 r_edges[:, k] = [42, 99]
 ```
 
-means that *global* atom 42 has neighbour 99 under some lattice shift.  
-This representation is ideal for high‑throughput GPU workflows.
+means that *global* atom 42 has global atom 99 as a neighbour under the lattice shift
+r_S_int[k] (an integer triplet indicating the periodic image), or equivalently
+r_S_cart[k] (the same shift represented as a Cartesian displacement). This output representation is ideal for constructing graphs or atomic features over a batch of configurations.
 
 ---
 
