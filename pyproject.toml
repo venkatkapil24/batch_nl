@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pynl-torch"
+name = "batch_nl_torch"
 version = "0.1.0b0"
 description = "Efficient and batched PyTorch-based neighbour list builder for atomistic simulations"
 readme = "README.md"
@@ -20,8 +20,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/venkatkapil24/pynl"
-Repository = "https://github.com/venkatkapil24/pynl"
+Homepage = "https://github.com/venkatkapil24/batch_nl"
+Repository = "https://github.com/venkatkapil24/batch_nl"
 
 [tool.setuptools]
-packages = ["pynl"]
+packages = ["batch_nl"]

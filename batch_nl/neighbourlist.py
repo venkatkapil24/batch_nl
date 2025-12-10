@@ -17,8 +17,9 @@ class NeighbourList:
     def __init__(
         self,
         list_of_positions: list,
-        list_of_cells,
-        cutoff: float,
+        list_of_cells: list,
+        cutoff: float | torch.Tensor,
+        float_dtype: torch.dtype = torch.float32,
         device: str | torch.device | None = None,
     ):
         """
@@ -28,7 +29,7 @@ class NeighbourList:
         ----------
         list_of_positions : list of array-like
             List of length n_configs; each entry is an (n_i, 3) array with
-            Cartesian positions for configuration i.
+            Cartesian positions for configuration i with n_i atoms.
         list_of_cells : list of array-like
             List of length n_configs; each entry is a (3, 3) cell matrix
             corresponding to configuration i.
@@ -51,21 +52,32 @@ class NeighbourList:
         self.cell_list = list_of_cells
         self.num_configs = len(self.positions_list)
 
+        # dtype check 
+        if float_dtype not in [
+            torch.float16,
+            torch.float32,
+            torch.float64,
+            torch.bfloat16,
+        ]:
+            raise TypeError(
+                f"float_dtype must be a floating torch.dtype, got {float_dtype}."
+            )
+
+        self.float_dtype = float_dtype
+        self.int_dtype = torch.long
+
         # cutoff
-        if isinstance(cutoff, int):
-            warnings.warn("Converting cutoff from int to float.", stacklevel=2)
-        try:
-            cutoff = float(cutoff)
-        except Exception:
-            raise TypeError(f"cutoff must be convertible to float, got {cutoff!r}.")
+        self.cutoff = torch.as_tensor(cutoff, dtype=self.float_dtype)
 
-        if cutoff <= 0.0:
-            raise ValueError(f"cutoff must be positive, got {cutoff}.")
+        if self.cutoff.ndim != 0:
+            raise ValueError(
+                f"cutoff must be a scalar, got tensor with shape {tuple(self.cutoff.shape)}."
+            )
 
-        self.cutoff = cutoff
-
-        self.float_dtype = torch.float64
-        self.int_dtype = torch.int64
+        if self.cutoff.item() <= 0.0:
+            raise ValueError(
+                f"cutoff must be positive, got {self.cutoff.item()}."
+            )
 
         # device
         if device is None:
