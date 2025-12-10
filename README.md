@@ -4,9 +4,9 @@
 
 The package is in an early stage, so contributions and suggestions for improving API coverage are very welcome.
 
-# Performance benchmark
+# Performance benchmarks on RTX 6000
 
-For detailed benchmarks against currently available neighbour lists, see
+For the full benchmark against currently available neighbour lists, see
 [examples/benchmark_multiple_structure.ipynb](examples/benchmark_multiple_structure.ipynb).
 
 ![Benchmark timings for batch_nl on RTX 6000](examples/benchmark_NVIDIA_RTX_A6000.png)
