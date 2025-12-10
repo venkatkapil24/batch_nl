@@ -42,7 +42,7 @@ configs = [
 ]
 
 list_of_positions = [
-    atoms.positions for atoms in configs\
+    atoms.positions for atoms in configs
         ]
 
 list_of_cells     = [
@@ -58,13 +58,12 @@ nl = NeighbourList(
 
 nl.load_data()
 
+# Output with global batch indices
 output = nl.calculate_neighbourlist(
     use_torch_compile=True
 )
 
-# Output with global batch indices
 r_edges, r_S_int, r_S_cart, r_d = output 
-
 
 # Or the familiar matscipy-style output
 (
