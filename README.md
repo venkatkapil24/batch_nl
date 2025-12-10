@@ -125,13 +125,11 @@ This matches the standard matscipy interface.
 
 ---
 
-# batch_nl API Overview
+## batch_nl API Overview
 
-## `NeighbourList`
+### `NeighbourList`
 
 ```python
-from batch_nl import NeighbourList
-
 nl = NeighbourList(
     list_of_positions=list_of_positions,
     list_of_cells=list_of_cells,
@@ -141,48 +139,66 @@ nl = NeighbourList(
 )
 ```
 
-### Parameters
-
-- **list_of_positions** — list of `(n_i, 3)` Cartesian coordinates  
-- **list_of_cells** — list of `(3, 3)` cell matrices  
-- **cutoff** — scalar cutoff (float, int, or tensor)  
-- **float_dtype** — floating torch dtype (`float16`, `float32`, `float64`, `bfloat16`)  
-- **device** — `"cpu"`, `"cuda"`, `"cuda:0"`, or `torch.device`  
-
----
-
-## `load_data()`
-
-Produces:
-
-- `batch_positions_tensor  (n_configs, n_max, 3)`
-- `batch_mask_tensor       (n_configs, n_max)`
-- `batch_cell_tensor       (n_configs, 3, 3)`
+#### Parameters
+```
+list_of_positions      (list[(n_i, 3)])       Cartesian coordinates per configuration
+list_of_cells          (list[(3, 3)])         Cell matrices per configuration
+cutoff                 (scalar)               Cutoff radius (float, int, or tensor)
+float_dtype            (torch.dtype)          One of {float16, float32, float64, bfloat16}
+device                 (str | torch.device)   "cpu", "cuda", or explicit device
+```
 
 ---
 
-## `calculate_neighbourlist(use_torch_compile=True)`
+### `load_data()`
 
-Outputs (global indexing):
-
-- `r_edges                 (2, n_edges)`
-- `r_S_int                 (n_edges, 3)`
-- `r_S_cart                (n_edges, 3)`
-- `r_distances             (n_edges,)`
+#### Produces (internal tensors)
+```
+batch_positions_tensor   (n_configs, n_max, 3)
+batch_mask_tensor        (n_configs, n_max)
+batch_cell_tensor        (n_configs, 3, 3)
+```
 
 ---
 
-## `get_matscipy_output_from_batch_output`
+### `calculate_neighbourlist(use_torch_compile=True)`
 
-Converts global → local (per configuration):
+#### Parameters
+```
+use_torch_compile        (bool)    Enable torch.compile acceleration
+```
 
-Returns lists of length `n_configs`:
+#### Returns
+```
+r_edges                  (2, n_edges)        Global source/target atom indices
+r_S_int                  (n_edges, 3)        Integer lattice shifts
+r_S_cart                 (n_edges, 3)        Cartesian lattice shifts
+r_distances              (n_edges,)          Pair distances
+```
 
-- `atom_index_list[c]      (n_edges_c,)`
-- `neighbor_index_list[c]  (n_edges_c,)`
-- `int_shift_list[c]       (n_edges_c, 3)`
-- `cart_shift_list[c]      (n_edges_c, 3)`
-- `distance_list[c]        (n_edges_c,)`
+---
+
+### `get_matscipy_output_from_batch_output(...)`
+
+#### Converts global indexing → local indexing
+
+#### Parameters
+```
+r_edges                  (2, n_edges)
+r_integer_lattice_shifts (n_edges, 3)
+r_cartesian_lattice_shifts (n_edges, 3)
+r_distances              (n_edges,)
+device                   ("cpu" | "cuda" | None)
+```
+
+#### Returns (lists, length = n_configs)
+```
+atom_index_list[c]        (n_edges_c,)       Local source atom indices
+neighbor_index_list[c]    (n_edges_c,)       Local neighbour atom indices
+int_shift_list[c]         (n_edges_c, 3)     Integer shifts per pair
+cart_shift_list[c]        (n_edges_c, 3)     Cartesian shifts per pair
+distance_list[c]          (n_edges_c,)       Distances per pair
+```
 
 ---
 
