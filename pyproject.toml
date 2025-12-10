@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "batch_nl-torch"
+name = "batch_nl_torch"
 version = "0.1.0b0"
 description = "Efficient and batched PyTorch-based neighbour list builder for atomistic simulations"
 readme = "README.md"
