@@ -8,7 +8,7 @@ version = "0.1.0b1"
 description = "Efficient and batched PyTorch-based neighbour list builder for atomistic simulations"
 readme = "README.md"
 requires-python = ">=3.7"
-license = { text = "Academic Software Licence v1.0 (ASL)" }
+license = { text = "Apache-2.0 license" }
 authors = [
   { name = "Venkat Kapil" }
 ]
