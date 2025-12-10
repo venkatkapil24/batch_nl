@@ -4,6 +4,14 @@
 
 The package is in an early stage, so contributions and suggestions for improving API coverage are very welcome.
 
+# Performance benchmark
+
+For detailed benchmarks against currently available neighbour lists, see
+[examples/benchmark_multiple_structure.ipynb](examples/benchmark_multiple_structure.ipynb).
+
+![Benchmark timings for batch_nl](examples/benchmark.png)
+
+
 ---
 
 ## Installation
@@ -202,6 +210,9 @@ distance_list[c]          (n_edges_c,)       Distances per pair
 ---
 
 ## Testing
+
+Tests include unit cells with varying skews taken from torch-sim with matscipy as the ground truth.
+
 
 ```bash
 pytest
