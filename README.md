@@ -1,6 +1,6 @@
-# pynl — Batched neighbour-list builder in PyTorch
+# batch_nl — Batched neighbour-list builder in PyTorch
 
-`pynl` provides a fully vectorised, batched neighbour-list construction
+`batch_nl` provides a fully vectorised, batched neighbour-list construction
 for periodic atomistic systems using PyTorch. Configurations of different
 sizes are padded into a single batch and processed entirely on the chosen
 device (CPU or CUDA), enabling fast and memory-efficient neighbour list
@@ -13,14 +13,14 @@ generation.
 ### One-line install (directly from GitHub)
 
 ```bash
-pip install git+https://github.com/venkatkapil24/pynl.git
+pip install git+https://github.com/venkatkapil24/batch_nl.git
 ```
 
 ### Install from source (recommended for development)
 
 ```bash
-git clone https://github.com/venkatkapil24/pynl.git
-cd pynl
+git clone https://github.com/venkatkapil24/batch_nl.git
+cd batch_nl
 pip install -e .
 ```
 
@@ -31,7 +31,7 @@ pip install -e .
 ```python
 import torch
 from ase.build import bulk
-from pynl import NeighbourList
+from batch_nl import NeighbourList
 
 device = "cuda:0"   # or "cpu"
 cutoff = 3.0        # cutoff in Angstrom
@@ -89,7 +89,7 @@ for k in range(min(5, len(i))):
 
 ```python
 from ase.build import bulk
-from pynl import NeighbourList
+from batch_nl import NeighbourList
 
 cutoff = 3.0
 device = "cuda:0"
@@ -139,7 +139,7 @@ for cfg_idx in range(len(configs)):
 ### `NeighbourList`
 
 ```python
-from pynl import NeighbourList
+from batch_nl import NeighbourList
 
 nl = NeighbourList(
     list_of_positions=list_of_positions,

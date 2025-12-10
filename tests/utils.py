@@ -1,7 +1,7 @@
 import torch
 from collections import Counter
 from matscipy.neighbours import neighbour_list as matscipy_neighbour_list
-from pynl import NeighbourList
+from batch_nl import NeighbourList
 
 
 def _check_neighbourlist_ON2_matches_matscipy(
