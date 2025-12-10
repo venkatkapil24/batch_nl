@@ -6,7 +6,7 @@ The package is in an early stage, so contributions and suggestions for improving
 
 # Performance benchmarks on RTX 6000
 
-For the full benchmark against currently available neighbour lists, see
+Here is a test for batches of structures containing 128 atoms. For the full benchmark against currently available neighbour lists, see
 
 [examples/benchmark_multiple_structure.ipynb](examples/benchmark_multiple_structure.ipynb).
 
