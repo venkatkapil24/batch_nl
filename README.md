@@ -6,7 +6,7 @@ The package is at an early stage, so contributions and suggestions to improve AP
 
 # Performance benchmarks on RTX 6000
 
-*Summary*. batch_nl outperforms CPU-based neighbour-list implementations and previous batched GPU-based approaches, but is still superseded by NVIDIA’s ALCHEMI implementation.
+*Summary*. batch_nl outperforms CPU-based neighbour-list implementations and previous batched GPU-based approaches, but is superseded by NVIDIA’s ALCHEMI implementation.
 
 *When you might use batch_nl for performance*. As a fallback when ALCHEMI is not available, or on non-NVIDIA accelerators (e.g. AMD/Intel GPUs or TPUs).
 
