@@ -1,12 +1,17 @@
 # batch_nl — Batched neighbour-list builder in PyTorch
 
-`batch_nl` provides fully vectorised, GPU-accelerated batched neighbour-list construction for periodic atomistic systems using PyTorch. All configurations are processed together in a single tensor batch, to enable fast neighbour search and seamless integration with MLIPs and other batched workflows. 
+`batch_nl` provides a portable, fully vectorised, GPU-accelerated batched neighbour-list construction for periodic atomistic systems using PyTorch. All configurations are processed together in a single tensor batch, to enable fast neighbour search and seamless integration with MLIPs and other batched workflows. 
 
-The package is in an early stage, so contributions and suggestions for improving API coverage are very welcome.
+The package is at an early stage, so contributions and suggestions to improve API coverage are very welcome.
 
 # Performance benchmarks on RTX 6000
 
-A test for batches of structures containing 128 atoms.
+*Summary*. batch_nl outperforms CPU-based neighbour-list implementations and previous batched GPU-based approaches, but is still superseded by NVIDIA’s ALCHEMI implementation.
+
+*When you might use batch_nl for performance*. As a fallback when ALCHEMI is not available, or on non-NVIDIA accelerators (e.g. AMD/Intel GPUs or TPUs).
+
+*What the benchmark figure does not show*. batch_nl is more memory-intensive than the O(N) codes and NVIDIA’s O(N²) implementation, due to large intermediate tensors created during broadcasting. Reducing this memory footprint is a target for future versions.
+
 ![Benchmark timings for batch_nl on RTX 6000](examples/benchmark_NVIDIA_RTX_A6000.png)
 
 For the full benchmark against currently available neighbour lists, see
