@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "batch_nl_torch"
-version = "0.1.0b1"
+version = "0.1.0"
 description = "Efficient and batched PyTorch-based neighbour list builder for atomistic simulations"
 readme = "README.md"
 requires-python = ">=3.7"
-license = "Apache-2.0" }
+license = "Apache-2.0"
 authors = [
   { name = "Venkat Kapil" }
 ]
