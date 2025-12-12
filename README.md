@@ -22,13 +22,13 @@ For the full benchmark against currently available neighbour lists, see
 
 ## Installation
 
-### One-line install (from GitHub)
+### Install from PyPI (recommended)
 
 ```bash
-pip install git+https://github.com/venkatkapil24/batch_nl.git
+pip install batch-nl-torch
 ```
 
-### Install from source (recommended for development)
+### Install from source (for development)
 
 ```bash
 git clone https://github.com/venkatkapil24/batch_nl.git
